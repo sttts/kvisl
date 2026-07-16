@@ -111,7 +111,7 @@ export default (
             id="children"
             side="right"
             cardinality="many"
-            sharing={{ mode: "merge", branch: "late" }}
+            sharing={{ mode: "merge", branch: { preference: "late" } }}
           />
         </Node>
 
@@ -147,7 +147,7 @@ export default (
             id="children"
             side="left"
             cardinality="many"
-            sharing={{ mode: "merge", branch: "late" }}
+            sharing={{ mode: "merge", branch: { preference: "late" } }}
           />
           <Port id="parent" side="top" />
         </Node>
@@ -159,7 +159,7 @@ export default (
             id="children"
             side="right"
             cardinality="many"
-            sharing={{ mode: "bundle", branch: "late" }}
+            sharing={{ mode: "bundle", branch: { preference: "late" } }}
           />
         </Node>
       </Grid>

@@ -238,7 +238,7 @@ function ControlPlane() {
             id="placement"
             side="bottom"
             cardinality="many"
-            sharing={{ mode: "merge", branch: "late" }}
+            sharing={{ mode: "merge", branch: { preference: "late" } }}
           />
         </Node>
         <Node id="gateway" role="inference-gateway">
@@ -253,7 +253,7 @@ function ControlPlane() {
             id="requests"
             side="bottom"
             cardinality="many"
-            sharing={{ mode: "merge", branch: "late" }}
+            sharing={{ mode: "merge", branch: { preference: "late" } }}
           />
         </Node>
       </Row>

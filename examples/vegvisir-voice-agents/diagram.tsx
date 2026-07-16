@@ -180,7 +180,7 @@ function UserOwnedAgents() {
           id="tools"
           side="bottom"
           cardinality="many"
-          sharing={{ mode: "merge", branch: "late" }}
+          sharing={{ mode: "merge", branch: { preference: "late" } }}
         />
       </Node>
 

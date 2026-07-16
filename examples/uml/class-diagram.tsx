@@ -72,7 +72,7 @@ export default (
       <Port
         ref={paymentMethod.port("generalizations")}
         side="bottom"
-        sharing={{ mode: "merge", branch: "late" }}
+        sharing={{ mode: "merge", branch: { preference: "late" } }}
       />
 
       <UmlAssociation id="customer-orders">
