@@ -170,7 +170,7 @@ Content values that do not own diagram entities, such as text runs, need no ID. 
 The precise component names and property forms remain subject to design. Normalized semantics MUST include at least these categories (shapes in [MODEL.md](MODEL.md)):
 
 - `Object`: the one structural primitive — optional shape, content, label, ports, children, orientation, anchor. `Diagram`, `Scope`, and `Node` are authoring shorthands over it with different defaults, not separate primitives;
-- `Layout`: arrangement of a set of objects, with ordering, alignment, and distribution;
+- `Layout`: the arrangement facet of a container object — strategy, ordering, alignment, distribution over its placeable children; not a separate entity;
 - `View`: named alternative representation of one component object, selected first-fit in declaration order;
 - `Port`: symmetric attachment point on an object;
 - `Dock`: the attachment identity of one line end; either a shared named port or a line-owned automatic dock;
@@ -229,7 +229,7 @@ References MAY use strings, typed `ref()` helpers, or template literals. If seve
 
 A component MUST be able to reference its own root region through a `self` alias — `padding(self, "left")` — instead of ascending and re-entering by its externally assigned ID, which would couple the component to its position in the parent.
 
-`/` MUST descend through named ordinary containers, `..` MUST ascend one named ordinary container, and `.` MUST select a named port on an entity. The exact typed helper API may evolve, but these relationships MUST normalize unambiguously. Ordinary lookup MUST NOT descend into `View`, `When`, `Switch`, or their unmaterialized template descendants. A normal path therefore cannot accidentally depend on whichever branch a renderer later selects.
+`/` MUST descend through named ordinary containers, `..` MUST ascend one named ordinary container, `.` MUST select a named port on an entity, and `.#` MUST select a named port group (`voice-agent.#loop`). The exact typed helper API may evolve, but these relationships MUST normalize unambiguously. Ordinary lookup MUST NOT descend into `View`, `When`, `Switch`, or their unmaterialized template descendants. A normal path therefore cannot accidentally depend on whichever branch a renderer later selects.
 
 Component boundaries SHOULD use opaque `port()` handles when only the public interface is intended. Deep paths remain a supported escape hatch and inspection mechanism, not an encapsulation violation. Moving or nesting a component preserves its internal relative addresses; only an external absolute path to that instance changes.
 
@@ -314,7 +314,7 @@ The exact set of shape primitives remains open. Extensions MUST be namespaced an
 
 Layouts MUST compose recursively. At least the following strategies SHOULD be available: Row, Column, Stack, Overlay, Grid, Tree, Radial, Graph or Layered, and unconstrained arrangement governed by constraints.
 
-A layout MUST have an explicit member set. JSX children MAY be shorthand for that set with a fixed carve-out: only placeable objects become members. Lines, segments, ports, port groups, corridors, constraints, rules, and anchored objects MAY be declared among the same children but MUST NOT enter the member set. An object with an anchor leaves the member set; removing the anchor restores membership.
+Layout MUST be a facet of its container object, never a separate entity with its own member list: the member set is derived from the container's children with a fixed carve-out — only placeable objects become members. Lines, segments, ports, port groups, corridors, constraints, rules, and anchored objects MAY be declared among the same children but MUST NOT enter the member set. An object with an anchor leaves the member set; removing the anchor restores membership.
 
 Layout MAY appear both as a component (`<Row id="services">...</Row>`) and as a property (`<Scope id="services" layout={{ kind: "row" }}>`); both forms MUST normalize identically.
 
@@ -625,6 +625,8 @@ At least these constraint families SHOULD be available:
 
 The `extent` family exists so that span-shaped visuals — activation bars on a lifeline, fork and join bars spanning their flows, brackets — remain honest objects stretched between anchors instead of thick overlay lines.
 
+Axes and sides in spatial constraints MUST be interpreted in the local frame of the constraint's declaring container, like every other directional word; constraints across differently oriented subtrees are therefore unambiguous.
+
 Partial-order constraints MUST be preferred. Objects not mentioned remain unconstrained. Cycles in hard ordering constraints MUST produce diagnostics.
 
 ## 12. Styling: rules, cascade, and conditions
@@ -678,7 +680,7 @@ A rule MAY carry a condition from the shared condition model of section 7.5 — 
 
 ### 12.5 What rules may and may not do
 
-Rules MUST be able to set presentation properties (fill, stroke, stroke width, dash, opacity, roughness, fonts, text orientation, dock markers) and metric defaults (margin, padding, gap, minimum sizes, spacing). Properties that influence intrinsic size or routing space MUST be resolved before layout and routing; purely painterly properties MAY be applied later.
+Rules MUST be able to set presentation properties (fill, fill style, stroke, stroke width, dash, opacity, roughness, fonts, text orientation, dock markers) and metric defaults (margin, padding, gap, minimum sizes, spacing). Metric props on entities (`margin`, `padding`, `gap`) MUST be sugar for inline-layer declarations of the same properties, so metrics have exactly one resolution mechanism. Properties that influence intrinsic size or routing space MUST be resolved before layout and routing; purely painterly properties MAY be applied later.
 
 Rules MUST NOT change topology, identity, layout membership, layout strategy, ports, sharing, routing, or entity existence. There is no `display: none` analog — structural alternatives belong to views and `When`. Corridor pressure and port sharing policies are semantics, not styles.
 
@@ -819,6 +821,7 @@ At least these errors MUST be detected before solving:
 - required `merge` with incompatible styles on the shared piece;
 - share groups spanning lines with no common end;
 - invalid or empty layout membership, or a non-placeable entity in a member set;
+- a `when` condition on an ordinary (non-meta) entity;
 - an anchored object that is simultaneously forced into layout membership, or an anchor that does not resolve;
 - cycles in hard partial orders;
 - invalid orientation values;

@@ -540,7 +540,7 @@ export function Interaction({
           key={`${m.id}-row`}
           id={`${m.id}-row`}
           kind="align"
-          edge="center-y"
+          edge="center-vertical"
           members={[occ(m.from, m.id), occ(m.to, m.id)]}
           strength="required"
         />,
