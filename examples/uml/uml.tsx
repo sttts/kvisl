@@ -11,6 +11,8 @@ import {
   Row,
   Scope,
   Text,
+  role,
+  rule,
 } from "@excalmermaid/core";
 
 type Child = unknown;
@@ -51,6 +53,18 @@ type RelationKind =
 const hollowTriangle = { kind: "extension", namespace: "uml", name: "hollow-triangle" } as const;
 const hollowDiamond = { kind: "extension", namespace: "uml", name: "hollow-diamond" } as const;
 const filledDiamond = { kind: "extension", namespace: "uml", name: "filled-diamond" } as const;
+
+// Library-layer stylesheet: UML notation presentation keyed by roles. A theme
+// or document layer can override any of it without touching the components.
+export const umlStyles = [
+  rule(role("uml-dependency"), { dash: "dashed" }),
+  rule(role("uml-realization"), { dash: "dashed" }),
+  rule(role("uml-include"), { dash: "dashed" }),
+  rule(role("uml-extend"), { dash: "dashed" }),
+  rule(role("uml-reply"), { dash: "dashed" }),
+  rule(role("uml-lifeline-spine"), { dash: "dashed" }),
+  rule(role("uml-activation"), { fill: "near-white" }),
+];
 
 function featureText(feature: UmlFeature) {
   return `${feature.visibility ?? ""}${feature.visibility ? " " : ""}${feature.text}`;
@@ -366,6 +380,7 @@ export function UmlRelation({
     ...(guard ? [{ text: `[${guard}]`, placement: "center", role: "guard" }] : []),
   ];
 
+  // dash styling comes from umlStyles rules keyed by the role
   return (
     <Line
       id={id}
@@ -374,7 +389,6 @@ export function UmlRelation({
       to={to}
       heads={heads}
       labels={labels}
-      style={{ dash: ["dependency", "realization", "include", "extend"].includes(kind) ? "dashed" : "solid" }}
     />
   );
 }
@@ -486,11 +500,11 @@ export function Interaction({
             <Node id="end" role="uml-lifeline-end" shape="uml:occurrence" />
             <Line
               id="spine"
+              role="uml-lifeline-spine"
               from="head"
               to="end"
               heads="none"
               space="overlay"
-              style={{ dash: "dashed" }}
             />
             {(l.activations ?? []).flatMap((a) => [
               <Node key={a.id} id={a.id} role="uml-activation" shape="rectangle" />,
@@ -521,7 +535,6 @@ export function Interaction({
             { text: `${i + 1}`, placement: "start", role: "sequence" },
             { text: m.text, placement: "center", role: "name" },
           ]}
-          style={{ dash: m.step === "reply" ? "dashed" : "solid" }}
         />,
         <Constraint
           key={`${m.id}-row`}

@@ -16,7 +16,7 @@ The current set covers:
 - [activity diagrams](activity-diagram.tsx);
 - [state-machine diagrams](state-machine-diagram.tsx).
 
-[`uml.tsx`](uml.tsx) is an illustrative UML component library implemented with ordinary TSX components and core entities. It is part of the grammar design, not a runtime implementation.
+[`uml.tsx`](uml.tsx) is an illustrative UML component library implemented with ordinary TSX components and core entities. It ships its notation presentation as a library-layer stylesheet (`umlStyles`), so a theme or document can override any of it without touching the components. It is part of the grammar design, not a runtime implementation.
 
 More specialized UML families — communication, composite-structure, timing, interaction-overview, and profile diagrams — are candidates for a later coverage set. The current set first establishes the structural, behavioral, and interaction mechanisms on which those notations build.
 

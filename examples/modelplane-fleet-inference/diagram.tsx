@@ -1,5 +1,7 @@
 // Pre-implementation grammar fixture. This file specifies the intended
 // authoring model and is not expected to compile until the core API exists.
+// Views are ordered first-fit alternatives; presentation lives in
+// document-layer rules keyed by roles and classes.
 
 import {
   Column,
@@ -21,25 +23,43 @@ import {
   Title,
   View,
   When,
-  boost,
+  cls,
   context,
-  eq,
-  gte,
   gap,
-  lte,
-  score,
+  gte,
+  role,
+  rule,
 } from "@excalmermaid/core";
 
-const colors = {
-  gray: "structural-gray",
-  green: "ml-green",
-  blue: "platform-blue",
-  yellow: "composition-yellow",
-  orange: "reconcile-orange",
-  purple: "request-purple",
-  pink: "external-pink",
-  cyan: "locality-cyan",
-};
+const styles = [
+  rule(role("serving-cluster"), { fill: "near-white", stroke: "structural-gray" }),
+  rule(role("control-plane"), { fill: "near-white", stroke: "structural-gray" }),
+  rule(role("inference-fleet"), { fill: "near-white", stroke: "structural-gray" }),
+  rule(role("external-actor"), { stroke: "structural-gray" }),
+  rule(role("ml-api"), { stroke: "ml-green" }),
+  rule(role("platform-api"), { stroke: "platform-blue" }),
+  rule(role("composition"), { stroke: "composition-yellow" }),
+  rule(role("reconcile-output"), { stroke: "composition-yellow" }),
+  rule(role("fleet-scheduler"), { stroke: "reconcile-orange" }),
+  rule(role("inference-gateway"), { stroke: "request-purple" }),
+  rule(role("serving-stack"), { stroke: "platform-blue" }),
+  rule(role("model-replica"), { stroke: "reconcile-orange" }),
+  rule(role("model-cache"), { stroke: "ml-green" }),
+  rule(role("cluster-edge"), { stroke: "request-purple" }),
+  rule(role("serving-cluster-summary"), { stroke: "request-purple" }),
+  rule(role("status"), { stroke: "structural-gray" }),
+  rule(role("external-endpoint"), { stroke: "external-pink" }),
+  rule(role("locality"), { stroke: "locality-cyan" }),
+  rule(role("stub"), { stroke: "reconcile-orange", dash: "dashed" }),
+  rule(role("client"), { stroke: "request-purple" }),
+  rule(role("implementation-status"), { stroke: "structural-gray" }),
+  rule(cls("ml-intent"), { stroke: "ml-green" }),
+  rule(cls("platform-intent"), { stroke: "platform-blue" }),
+  rule(cls("reconcile"), { stroke: "reconcile-orange" }),
+  rule(cls("request"), { stroke: "request-purple" }),
+  rule(cls("cache"), { stroke: "ml-green" }),
+  rule(cls("locality"), { stroke: "locality-cyan" }),
+];
 
 type ClusterProps = {
   id: string;
@@ -72,53 +92,31 @@ function Cluster({
       label={label}
       role="serving-cluster"
       layout={{ kind: "column", gap: "medium" }}
-      style={{ fill: "near-white", stroke: colors.gray }}
     >
       <Port id="placement" side="top" />
       <Port id="request" side="right" />
 
-      <View
-        id="overview"
-        detail={0}
-        score={score(
-          0,
-          boost(100, lte(context("allocation.inlineSize"), 80)),
-          boost(20, eq(context("purpose"), "architecture")),
-        )}
-        footprint={{ minWidth: 35, minHeight: 20 }}
-      >
-        <Node id="summary" role="serving-cluster-summary" style={{ stroke: colors.purple }}>
-          <Text>{label}</Text>
-          <TextLines values={edge} />
-        </Node>
-        <PortPlacement port="placement" on="summary" side="top" />
-        <PortPlacement port="request" on="summary" side="right" />
-      </View>
-
+      {/* declaration order is preference order: first viable view wins */}
       <View
         id="internals"
         detail={2}
-        score={score(
-          10,
-          boost(100, gte(context("allocation.inlineSize"), 70)),
-        )}
+        requires={gte(context("allocation.inlineSize"), 70)}
         footprint={{ minWidth: 100, minHeight: 70 }}
-        fallback="overview"
       >
         <Grid id="serving-grid" columns={2} gap="medium">
-          <Node id="serving-stack" role="serving-stack" style={{ stroke: colors.blue }}>
+          <Node id="serving-stack" role="serving-stack">
             <TextLines values={serving} />
             <Port id="replica" side="right" />
           </Node>
 
-          <Node id="model-replica" role="model-replica" style={{ stroke: colors.orange }}>
+          <Node id="model-replica" role="model-replica">
             <TextLines values={replica} />
             <Port id="stack" side="left" />
             <Port id="edge" side="bottom" />
           </Node>
 
           {withCache ? (
-            <Node id="model-cache" role="model-cache" style={{ stroke: colors.green }}>
+            <Node id="model-cache" role="model-cache">
               <Text>ModelCache</Text>
               <Text>Hugging Face →</Text>
               <Text>RWX PVC</Text>
@@ -126,14 +124,14 @@ function Cluster({
               <Port id="replica" side="right" />
             </Node>
           ) : withObservedStatus ? (
-            <Node id="observed-status" role="status" style={{ stroke: colors.gray }}>
+            <Node id="observed-status" role="status">
               <Text>Observed status</Text>
               <Text>gpuPools / labels</Text>
               <Text>coarse capacity</Text>
             </Node>
           ) : null}
 
-          <Node id="cluster-edge" role="cluster-edge" style={{ stroke: colors.purple }}>
+          <Node id="cluster-edge" role="cluster-edge">
             <TextLines values={edge} />
             <Port id="replica" side="top" />
           </Node>
@@ -144,38 +142,47 @@ function Cluster({
 
         {withLocalityNote ? (
           <When id="locality-detail" test={gte(context("allocation.inlineSize"), 130)}>
-            <Note id="locality" role="locality" style={{ stroke: colors.cyan }}>
+            <Note id="locality" role="locality">
               KV locality: keep prefill/decode inside one cluster
             </Note>
             <Line
               id="edge-to-locality"
+              className="locality"
               from="serving-grid/cluster-edge"
               to="locality"
-              style={{ stroke: colors.cyan }}
             />
           </When>
         ) : null}
 
         <Line
           id="stack-to-replica"
+          className="reconcile"
           from="serving-grid/serving-stack.replica"
           to="serving-grid/model-replica.stack"
-          style={{ stroke: colors.orange }}
         />
         {withCache ? (
           <Line
             id="cache-to-replica"
+            className="cache"
             from="serving-grid/model-cache.replica"
             to="serving-grid/model-replica.stack"
-            style={{ stroke: colors.green }}
           />
         ) : null}
         <Line
           id="replica-to-edge"
+          className="request"
           from="serving-grid/model-replica.edge"
           to="serving-grid/cluster-edge.replica"
-          style={{ stroke: colors.purple }}
         />
+      </View>
+
+      <View id="overview" detail={0} footprint={{ minWidth: 35, minHeight: 20 }}>
+        <Node id="summary" role="serving-cluster-summary">
+          <Text>{label}</Text>
+          <TextLines values={edge} />
+        </Node>
+        <PortPlacement port="placement" on="summary" side="top" />
+        <PortPlacement port="request" on="summary" side="right" />
       </View>
     </Scope>
   );
@@ -188,17 +195,16 @@ function ControlPlane() {
       label="Modelplane control plane (Crossplane v2)"
       role="control-plane"
       layout={{ kind: "column", gap: "medium" }}
-      style={{ fill: "near-white", stroke: colors.gray }}
     >
       <Row id="control-flow" align="center" gap="large">
-        <Node id="ml-apis" role="ml-api" style={{ stroke: colors.green }}>
+        <Node id="ml-apis" role="ml-api">
           <Text>ML APIs</Text>
           <Text>ModelDeployment</Text>
           <Text>ModelService</Text>
           <Port id="intent" side="top" />
           <Port id="platform" side="right" />
         </Node>
-        <Node id="platform-apis" role="platform-api" style={{ stroke: colors.blue }}>
+        <Node id="platform-apis" role="platform-api">
           <Text>Platform APIs</Text>
           <Text>InferenceGateway</Text>
           <Text>InferenceClass</Text>
@@ -208,7 +214,7 @@ function ControlPlane() {
           <Port id="ml" side="left" />
           <Port id="composition" side="right" />
         </Node>
-        <Node id="composition" role="composition" style={{ stroke: colors.yellow }}>
+        <Node id="composition" role="composition">
           <Text>Composition functions</Text>
           <Text>expand XRs</Text>
           <Text>render cluster resources</Text>
@@ -217,7 +223,7 @@ function ControlPlane() {
           <Port id="scheduler" side="right" />
           <Port id="outputs" side="bottom" />
         </Node>
-        <Node id="scheduler" role="fleet-scheduler" style={{ stroke: colors.orange }}>
+        <Node id="scheduler" role="fleet-scheduler">
           <Text>Fleet scheduler</Text>
           <Text>label selectors</Text>
           <Text>coarse node-capacity gate</Text>
@@ -232,7 +238,7 @@ function ControlPlane() {
             sharing={{ mode: "merge", branch: "late" }}
           />
         </Node>
-        <Node id="gateway" role="inference-gateway" style={{ stroke: colors.purple }}>
+        <Node id="gateway" role="inference-gateway">
           <Text>InferenceGateway</Text>
           <Text>Traefik today</Text>
           <Text>ModelService URLs</Text>
@@ -249,52 +255,52 @@ function ControlPlane() {
         </Node>
       </Row>
 
-      <Node id="reconcile-outputs" role="reconcile-output" style={{ stroke: colors.yellow }}>
+      <Node id="reconcile-outputs" role="reconcile-output">
         <Text>Reconcile outputs</Text>
         <Text>ModelDeployment → pinned ModelReplica + optional ModelEndpoint</Text>
         <Text>ModelService → equal-weight HTTPRoute fanout</Text>
         <Port id="composition" side="top" />
       </Node>
 
-      <Line from="control-flow/ml-apis.platform" to="control-flow/platform-apis.ml" style={{ stroke: colors.orange }} />
-      <Line from="control-flow/platform-apis.composition" to="control-flow/composition.platform" style={{ stroke: colors.orange }} />
-      <Line from="control-flow/composition.scheduler" to="control-flow/scheduler.composition" style={{ stroke: colors.orange }} />
-      <Line from="control-flow/scheduler.gateway" to="control-flow/gateway.scheduler" style={{ stroke: colors.orange }} />
-      <Line from="control-flow/composition.outputs" to="reconcile-outputs.composition" style={{ stroke: colors.orange }} />
+      <Line className="reconcile" from="control-flow/ml-apis.platform" to="control-flow/platform-apis.ml" />
+      <Line className="reconcile" from="control-flow/platform-apis.composition" to="control-flow/composition.platform" />
+      <Line className="reconcile" from="control-flow/composition.scheduler" to="control-flow/scheduler.composition" />
+      <Line className="reconcile" from="control-flow/scheduler.gateway" to="control-flow/gateway.scheduler" />
+      <Line className="reconcile" from="control-flow/composition.outputs" to="reconcile-outputs.composition" />
     </Scope>
   );
 }
 
 export default (
-  <Diagram id="modelplane-fleet-inference" theme="excalidraw-handdrawn">
+  <Diagram id="modelplane-fleet-inference" theme="excalidraw-handdrawn" styles={styles}>
     <Title>Modelplane fleet inference architecture</Title>
     <Subtitle>
       Orange shows control-plane reconciliation; purple shows runtime inference routing.
     </Subtitle>
 
     <Legend id="legend" anchor="diagram" placement="inside-top-right" layout="column">
-      <LegendItem style={{ stroke: colors.orange }}>orange = reconcile / placement</LegendItem>
-      <LegendItem style={{ stroke: colors.purple }}>purple = request path</LegendItem>
-      <LegendItem style={{ stroke: colors.gray, dash: "dashed" }}>
+      <LegendItem className="reconcile">orange = reconcile / placement</LegendItem>
+      <LegendItem className="request">purple = request path</LegendItem>
+      <LegendItem style={{ stroke: "structural-gray", dash: "dashed" }}>
         dashed = design / stub / status
       </LegendItem>
     </Legend>
 
     <Row id="actors" distribute="space-between" align="end">
       <Row id="teams" gap="large">
-        <Node id="ml-team" role="external-actor" style={{ stroke: colors.green }}>
+        <Node id="ml-team" role="external-actor" className="ml-intent">
           <Text>ML team</Text>
           <Text>model + serving intent</Text>
           <Port id="control" side="bottom" />
         </Node>
-        <Node id="platform-team" role="external-actor" style={{ stroke: colors.blue }}>
+        <Node id="platform-team" role="external-actor" className="platform-intent">
           <Text>Platform team</Text>
           <Text>cluster classes, gateways,</Text>
           <Text>cache</Text>
           <Port id="control" side="bottom" />
         </Node>
       </Row>
-      <Node id="client" role="client" style={{ stroke: colors.purple }}>
+      <Node id="client" role="client">
         <Text>Client</Text>
         <Text>OpenAI-compatible</Text>
         <Text>API</Text>
@@ -309,7 +315,6 @@ export default (
       label="Inference fleet: per-cluster serving stacks and endpoint targets"
       role="inference-fleet"
       layout={{ kind: "row", align: "start", gap: "large" }}
-      style={{ fill: "near-white", stroke: colors.gray }}
     >
       <Cluster
         id="cluster-a"
@@ -330,12 +335,12 @@ export default (
       />
 
       <Column id="external-targets" gap="xlarge">
-        <Node id="external-endpoint" role="external-endpoint" style={{ stroke: colors.pink }}>
+        <Node id="external-endpoint" role="external-endpoint">
           <Text>External ModelEndpoint</Text>
           <Text>manual endpoint target</Text>
           <Text>still routed via gateway</Text>
         </Node>
-        <Note id="stubs" role="stub" style={{ stroke: colors.orange, dash: "dashed" }}>
+        <Note id="stubs" role="stub">
           Stubs exist for Dynamo / Grove / planner / router / workers; they may replace or encapsulate ServingStack + edge routing.
         </Note>
       </Column>
@@ -361,9 +366,9 @@ export default (
       <Line
         key={id}
         id={`place-${id}`}
+        className="reconcile"
         from="control-plane/control-flow/scheduler.placement"
         to={target}
-        style={{ stroke: colors.orange }}
       >
         <Segment
           through="placement-bus"
@@ -380,9 +385,9 @@ export default (
       <Line
         key={id}
         id={`request-${id}`}
+        className="request"
         from="control-plane/control-flow/gateway.requests"
         to={target}
-        style={{ stroke: colors.purple }}
       >
         <Segment
           through="request-bus"
@@ -391,11 +396,11 @@ export default (
       </Line>
     ))}
 
-    <Line from="actors/teams/ml-team.control" to="control-plane/control-flow/ml-apis.intent" style={{ stroke: colors.orange }} />
-    <Line from="actors/teams/platform-team.control" to="control-plane/control-flow/platform-apis.team" style={{ stroke: colors.orange }} />
-    <Line from="actors/client.request" to="control-plane/control-flow/gateway.client" style={{ stroke: colors.purple }} />
+    <Line className="reconcile" from="actors/teams/ml-team.control" to="control-plane/control-flow/ml-apis.intent" />
+    <Line className="reconcile" from="actors/teams/platform-team.control" to="control-plane/control-flow/platform-apis.team" />
+    <Line className="request" from="actors/client.request" to="control-plane/control-flow/gateway.client" />
 
-    <Note id="footer" role="implementation-status" style={{ stroke: colors.gray }}>
+    <Note id="footer" role="implementation-status">
       v0.1 implemented: GKE/EKS/BYO; Traefik control gateway; Envoy/GAIE workload gateways; Deployment/LWS; DRA; HF → RWX ModelCache. Early limits: equal-weight routing; no capacity scoring, anti-affinity policy, or transient failover. Design/stub: DynamoBackend, Grove / ModelExpress / DGD; one Modelplane API, no user-facing orchestrator switch.
     </Note>
   </Diagram>

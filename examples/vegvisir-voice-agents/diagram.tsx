@@ -1,5 +1,7 @@
 // Pre-implementation grammar fixture. This file specifies the intended
 // authoring model and is not expected to compile until the core API exists.
+// Presentation lives in document-layer rules; structure carries only roles
+// and classes.
 
 import {
   Column,
@@ -15,29 +17,35 @@ import {
   Subtitle,
   Text,
   Title,
+  cls,
   gap,
   padding,
+  role,
+  rule,
+  self,
 } from "@excalmermaid/core";
 
-const colors = {
-  ink: "ink",
-  muted: "muted-gray",
-  blue: "voice-blue",
-  orange: "decision-orange",
-  green: "road-green",
-  purple: "agent-purple",
-};
+const styles = [
+  rule(role("device"), { fill: "near-white", stroke: "muted-gray" }),
+  rule(role("actor"), { fill: "pale-yellow", stroke: "decision-orange" }),
+  rule(role("realtime-agent"), { fill: "pale-blue", stroke: "voice-blue" }),
+  rule(role("decision"), { fill: "pale-yellow", stroke: "decision-orange" }),
+  rule(role("agent-harness"), { fill: "pale-green", stroke: "road-green" }),
+  rule(role("knowledge-source"), { fill: "near-white", stroke: "muted-gray" }),
+  rule(role("remote-agents"), { fill: "pale-purple", stroke: "agent-purple" }),
+  rule(role("named-agent"), { fill: "light-purple", stroke: "agent-purple" }),
+  rule(role("agent-tool"), { stroke: "agent-purple" }),
+  rule(cls("voice"), { stroke: "voice-blue" }),
+  rule(cls("decision-flow"), { stroke: "decision-orange" }),
+  rule(cls("progress"), { stroke: "road-green" }),
+  rule(cls("knowledge"), { stroke: "muted-gray" }),
+  rule(cls("delegation"), { stroke: "agent-purple" }),
+];
 
 function Driver() {
   return (
     <Column id="driver-column" align="center" gap="large">
-      <Node
-        id="driver"
-        shape="ellipse"
-        label="Driver"
-        role="actor"
-        style={{ fill: "pale-yellow", stroke: colors.orange }}
-      >
+      <Node id="driver" shape="ellipse" label="Driver" role="actor">
         <Port id="voice" side="right" />
       </Node>
       <Text role="caption">speaks · listens</Text>
@@ -59,13 +67,8 @@ function Phone() {
       label="Vegvísir on iPhone"
       role="device"
       layout={{ kind: "column", gap: "large" }}
-      style={{ fill: "near-white", stroke: colors.muted }}
     >
-      <Node
-        id="voice-agent"
-        role="realtime-agent"
-        style={{ fill: "pale-blue", stroke: colors.blue }}
-      >
+      <Node id="voice-agent" role="realtime-agent">
         <Text role="heading">Realtime Voice Agent</Text>
         <Text role="heading">GPT-Realtime-2 → GPT-Live</Text>
         <Text role="heading">listens · speaks · delegates</Text>
@@ -81,19 +84,9 @@ function Phone() {
         </PortGroup>
       </Node>
 
-      <Node
-        id="speak-now"
-        shape="diamond"
-        label={"Speak\nnow?"}
-        role="decision"
-        style={{ fill: "pale-yellow", stroke: colors.orange }}
-      />
+      <Node id="speak-now" shape="diamond" label={"Speak\nnow?"} role="decision" />
 
-      <Node
-        id="road-agent"
-        role="agent-harness"
-        style={{ fill: "pale-green", stroke: colors.green }}
-      >
+      <Node id="road-agent" role="agent-harness">
         <Text role="heading">Road Agent Harness</Text>
         <Text role="heading">
           Drive context · async Road Tasks · ranking
@@ -112,21 +105,13 @@ function Phone() {
       </Node>
 
       <Row id="knowledge" gap="large" align="stretch">
-        <Node
-          id="local-context"
-          role="knowledge-source"
-          style={{ fill: "near-white", stroke: colors.muted }}
-        >
+        <Node id="local-context" role="knowledge-source">
           <Text>Local Markdown context</Text>
           <Text>Soul · Preferences · Today</Text>
           <Text>· Memory</Text>
           <Port id="harness" side="top" />
         </Node>
-        <Node
-          id="road-knowledge"
-          role="knowledge-source"
-          style={{ fill: "near-white", stroke: colors.muted }}
-        >
+        <Node id="road-knowledge" role="knowledge-source">
           <Text>Live road knowledge</Text>
           <Text>MapKit · Overpass ·</Text>
           <Text>Wikipedia</Text>
@@ -138,39 +123,39 @@ function Phone() {
           decision diamond; no channel declarations needed */}
       <Line
         id="accept-road-task"
+        className="voice"
         from="voice-agent.tasks"
         to="road-agent.tasks"
         label={"accept + refine\nRoad Task"}
-        style={{ stroke: colors.blue }}
       />
       <Line
         id="speak"
+        className="decision-flow"
         from="road-agent.speech"
         to="voice-agent.speech"
-        style={{ stroke: colors.orange }}
       >
         <Segment via="speak-now" />
       </Line>
       <Line
         id="progress"
+        className="progress"
         from="road-agent.progress"
         to="voice-agent.progress"
         label={"progress +\nstructured result"}
-        style={{ stroke: colors.green }}
       />
       <Line
         id="local-memory"
+        className="knowledge"
         from="road-agent.local-context"
         to="knowledge/local-context.harness"
         heads="both"
-        style={{ stroke: colors.muted }}
       />
       <Line
         id="live-knowledge"
+        className="knowledge"
         from="road-agent.road-knowledge"
         to="knowledge/road-knowledge.harness"
         heads="both"
-        style={{ stroke: colors.muted }}
       />
     </Scope>
   );
@@ -183,16 +168,11 @@ function UserOwnedAgents() {
       label="User-owned agents"
       role="remote-agents"
       layout={{ kind: "column", gap: "large" }}
-      style={{ fill: "pale-purple", stroke: colors.purple }}
     >
       <Text role="caption">private travel memory,</Text>
       <Text role="caption">wiki, bookings &amp; research</Text>
 
-      <Node
-        id="travel-agent"
-        role="named-agent"
-        style={{ fill: "light-purple", stroke: colors.purple }}
-      >
+      <Node id="travel-agent" role="named-agent">
         <Text role="heading">Named travel agent</Text>
         <Text role="heading">situated delegation</Text>
         <Port id="request" side="left" />
@@ -204,26 +184,26 @@ function UserOwnedAgents() {
         />
       </Node>
 
-      <Node id="openclaw" role="agent-tool" style={{ stroke: colors.purple }}>
+      <Node id="openclaw" role="agent-tool">
         <Text>OpenClaw</Text>
         <Text>Gateway</Text>
         <Text>/v1/responses</Text>
         <Port id="request" side="left" />
       </Node>
-      <Node id="hermes-webui" role="agent-tool" style={{ stroke: colors.purple }}>
+      <Node id="hermes-webui" role="agent-tool">
         <Text>Hermes WebUI</Text>
         <Text>background task API</Text>
         <Port id="request" side="left" />
       </Node>
-      <Node id="hermes-api" role="agent-tool" style={{ stroke: colors.purple }}>
+      <Node id="hermes-api" role="agent-tool">
         <Text>Hermes Agent API</Text>
         <Text>stateful runs /</Text>
         <Text>responses</Text>
         <Port id="request" side="left" />
       </Node>
 
-      {/* the named tools port joins the fan-out into one trunk in the
-          container's left padding band and branches late */}
+      {/* the named tools port joins the fan-out into one trunk in this
+          component's own left padding band and branches late */}
       {[
         ["openclaw", "openclaw.request"],
         ["hermes-webui", "hermes-webui.request"],
@@ -232,11 +212,11 @@ function UserOwnedAgents() {
         <Line
           key={id}
           id={`to-${id}`}
+          className="delegation"
           from="travel-agent.tools"
           to={target}
-          style={{ stroke: colors.purple }}
         >
-          <Segment through={padding("../user-owned", "left")} />
+          <Segment through={padding(self, "left")} />
         </Line>
       ))}
     </Scope>
@@ -244,7 +224,7 @@ function UserOwnedAgents() {
 }
 
 export default (
-  <Diagram id="vegvisir-voice-agents" theme="excalidraw-handdrawn">
+  <Diagram id="vegvisir-voice-agents" theme="excalidraw-handdrawn" styles={styles}>
     <Title>Vegvísir — one voice, multiple agents</Title>
     <Subtitle>
       A voice-first road companion that stays responsive while deeper work happens in the background
@@ -258,19 +238,19 @@ export default (
 
     <Line
       id="driver-conversation"
+      className="voice"
       from="system/driver-column/driver.voice"
       to="system/phone/voice-agent.driver"
       heads="both"
-      style={{ stroke: colors.blue }}
     />
 
     {/* climbs out of the phone, runs through the whitespace between the
         containers, and carries its label along that run */}
     <Line
       id="remote-delegation"
+      className="delegation"
       from="system/phone/road-agent.remote"
       to="system/user-owned/travel-agent.request"
-      style={{ stroke: colors.purple }}
     >
       <Segment
         through={gap("system/phone", "system/user-owned")}
