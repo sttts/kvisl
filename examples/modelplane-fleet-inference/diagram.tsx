@@ -25,6 +25,7 @@ import {
   When,
   cls,
   context,
+  eq,
   gap,
   gte,
   role,
@@ -59,6 +60,8 @@ const styles = [
   rule(cls("request"), { stroke: "request-purple" }),
   rule(cls("cache"), { stroke: "ml-green" }),
   rule(cls("locality"), { stroke: "locality-cyan" }),
+  // media-query analog: print targets get heavier boundaries
+  rule(role("serving-cluster"), { strokeWidth: 2 }, eq(context("medium"), "print")),
 ];
 
 type ClusterProps = {

@@ -1,0 +1,1313 @@
+{
+  "schema": "excalmermaid.logical",
+  "version": "0.1.0",
+  "root": 1,
+  "entities": [
+    {
+      "key": 1,
+      "kind": "object",
+      "id": "grammar-coverage",
+      "domain": "ordinary",
+      "parent": null,
+      "roles": [],
+      "classes": [],
+      "orientation": 0,
+      "content": [],
+      "children": [
+        2
+      ],
+      "ports": [],
+      "defaultLayout": 32
+    },
+    {
+      "key": 2,
+      "kind": "object",
+      "id": "system",
+      "domain": "ordinary",
+      "parent": 1,
+      "roles": [],
+      "classes": [],
+      "orientation": 0,
+      "content": [],
+      "children": [
+        3,
+        14,
+        27
+      ],
+      "ports": [],
+      "defaultLayout": 31
+    },
+    {
+      "key": 3,
+      "kind": "object",
+      "id": "upright",
+      "domain": "ordinary",
+      "parent": 2,
+      "roles": [
+        "pipeline"
+      ],
+      "classes": [],
+      "orientation": 0,
+      "content": [
+        {
+          "kind": "text",
+          "value": "Pipeline",
+          "role": "label"
+        }
+      ],
+      "children": [
+        4,
+        7,
+        10
+      ],
+      "ports": [],
+      "strictPorts": true,
+      "defaultLayout": 13
+    },
+    {
+      "key": 4,
+      "kind": "object",
+      "id": "ingest",
+      "domain": "ordinary",
+      "parent": 3,
+      "roles": [
+        "stage"
+      ],
+      "classes": [],
+      "orientation": 0,
+      "content": [
+        {
+          "kind": "text",
+          "value": "Ingest",
+          "role": "label"
+        }
+      ],
+      "children": [],
+      "ports": [
+        5,
+        6
+      ]
+    },
+    {
+      "key": 5,
+      "kind": "port",
+      "id": "in",
+      "domain": "ordinary",
+      "parent": 4,
+      "roles": [],
+      "classes": [],
+      "owner": 4,
+      "origin": "explicit",
+      "side": "left",
+      "cardinality": "many",
+      "sharing": {
+        "mode": "auto"
+      }
+    },
+    {
+      "key": 6,
+      "kind": "port",
+      "id": "out",
+      "domain": "ordinary",
+      "parent": 4,
+      "roles": [],
+      "classes": [],
+      "owner": 4,
+      "origin": "explicit",
+      "side": "right",
+      "cardinality": "many",
+      "sharing": {
+        "mode": "auto"
+      }
+    },
+    {
+      "key": 7,
+      "kind": "object",
+      "id": "transform",
+      "domain": "ordinary",
+      "parent": 3,
+      "roles": [
+        "stage"
+      ],
+      "classes": [],
+      "orientation": 0,
+      "content": [
+        {
+          "kind": "text",
+          "value": "Transform",
+          "role": "label"
+        }
+      ],
+      "children": [],
+      "ports": [
+        8,
+        9
+      ]
+    },
+    {
+      "key": 8,
+      "kind": "port",
+      "id": "in",
+      "domain": "ordinary",
+      "parent": 7,
+      "roles": [],
+      "classes": [],
+      "owner": 7,
+      "origin": "explicit",
+      "side": "left",
+      "cardinality": "many",
+      "sharing": {
+        "mode": "auto"
+      }
+    },
+    {
+      "key": 9,
+      "kind": "port",
+      "id": "out",
+      "domain": "ordinary",
+      "parent": 7,
+      "roles": [],
+      "classes": [],
+      "owner": 7,
+      "origin": "explicit",
+      "side": "right",
+      "cardinality": "many",
+      "sharing": {
+        "mode": "auto"
+      }
+    },
+    {
+      "key": 10,
+      "kind": "object",
+      "id": "publish",
+      "domain": "ordinary",
+      "parent": 3,
+      "roles": [
+        "stage"
+      ],
+      "classes": [],
+      "orientation": 0,
+      "content": [
+        {
+          "kind": "text",
+          "value": "Publish",
+          "role": "label"
+        }
+      ],
+      "children": [],
+      "ports": [
+        11,
+        12
+      ]
+    },
+    {
+      "key": 11,
+      "kind": "port",
+      "id": "in",
+      "domain": "ordinary",
+      "parent": 10,
+      "roles": [],
+      "classes": [],
+      "owner": 10,
+      "origin": "explicit",
+      "side": "left",
+      "cardinality": "many",
+      "sharing": {
+        "mode": "auto"
+      }
+    },
+    {
+      "key": 12,
+      "kind": "port",
+      "id": "out",
+      "domain": "ordinary",
+      "parent": 10,
+      "roles": [],
+      "classes": [],
+      "owner": 10,
+      "origin": "explicit",
+      "side": "right",
+      "cardinality": "many",
+      "sharing": {
+        "mode": "auto"
+      }
+    },
+    {
+      "key": 13,
+      "kind": "layout",
+      "id": null,
+      "domain": "ordinary",
+      "parent": 3,
+      "roles": [],
+      "classes": [],
+      "container": 3,
+      "members": [
+        4,
+        7,
+        10
+      ],
+      "strategy": {
+        "kind": "row"
+      },
+      "order": {
+        "kind": "prefer-source"
+      },
+      "gap": "medium"
+    },
+    {
+      "key": 14,
+      "kind": "object",
+      "id": "rotated",
+      "domain": "ordinary",
+      "parent": 2,
+      "roles": [],
+      "classes": [],
+      "orientation": 90,
+      "content": [],
+      "children": [
+        15
+      ],
+      "ports": [],
+      "defaultLayout": 26
+    },
+    {
+      "key": 15,
+      "kind": "object",
+      "id": "pipeline",
+      "domain": "ordinary",
+      "parent": 14,
+      "roles": [
+        "pipeline"
+      ],
+      "classes": [],
+      "orientation": 0,
+      "content": [
+        {
+          "kind": "text",
+          "value": "Pipeline",
+          "role": "label"
+        }
+      ],
+      "children": [
+        16,
+        19,
+        22
+      ],
+      "ports": [],
+      "strictPorts": true,
+      "defaultLayout": 25
+    },
+    {
+      "key": 16,
+      "kind": "object",
+      "id": "ingest",
+      "domain": "ordinary",
+      "parent": 15,
+      "roles": [
+        "stage"
+      ],
+      "classes": [],
+      "orientation": 0,
+      "content": [
+        {
+          "kind": "text",
+          "value": "Ingest",
+          "role": "label"
+        }
+      ],
+      "children": [],
+      "ports": [
+        17,
+        18
+      ]
+    },
+    {
+      "key": 17,
+      "kind": "port",
+      "id": "in",
+      "domain": "ordinary",
+      "parent": 16,
+      "roles": [],
+      "classes": [],
+      "owner": 16,
+      "origin": "explicit",
+      "side": "left",
+      "cardinality": "many",
+      "sharing": {
+        "mode": "auto"
+      }
+    },
+    {
+      "key": 18,
+      "kind": "port",
+      "id": "out",
+      "domain": "ordinary",
+      "parent": 16,
+      "roles": [],
+      "classes": [],
+      "owner": 16,
+      "origin": "explicit",
+      "side": "right",
+      "cardinality": "many",
+      "sharing": {
+        "mode": "auto"
+      }
+    },
+    {
+      "key": 19,
+      "kind": "object",
+      "id": "transform",
+      "domain": "ordinary",
+      "parent": 15,
+      "roles": [
+        "stage"
+      ],
+      "classes": [],
+      "orientation": 0,
+      "content": [
+        {
+          "kind": "text",
+          "value": "Transform",
+          "role": "label"
+        }
+      ],
+      "children": [],
+      "ports": [
+        20,
+        21
+      ]
+    },
+    {
+      "key": 20,
+      "kind": "port",
+      "id": "in",
+      "domain": "ordinary",
+      "parent": 19,
+      "roles": [],
+      "classes": [],
+      "owner": 19,
+      "origin": "explicit",
+      "side": "left",
+      "cardinality": "many",
+      "sharing": {
+        "mode": "auto"
+      }
+    },
+    {
+      "key": 21,
+      "kind": "port",
+      "id": "out",
+      "domain": "ordinary",
+      "parent": 19,
+      "roles": [],
+      "classes": [],
+      "owner": 19,
+      "origin": "explicit",
+      "side": "right",
+      "cardinality": "many",
+      "sharing": {
+        "mode": "auto"
+      }
+    },
+    {
+      "key": 22,
+      "kind": "object",
+      "id": "publish",
+      "domain": "ordinary",
+      "parent": 15,
+      "roles": [
+        "stage"
+      ],
+      "classes": [],
+      "orientation": 0,
+      "content": [
+        {
+          "kind": "text",
+          "value": "Publish",
+          "role": "label"
+        }
+      ],
+      "children": [],
+      "ports": [
+        23,
+        24
+      ]
+    },
+    {
+      "key": 23,
+      "kind": "port",
+      "id": "in",
+      "domain": "ordinary",
+      "parent": 22,
+      "roles": [],
+      "classes": [],
+      "owner": 22,
+      "origin": "explicit",
+      "side": "left",
+      "cardinality": "many",
+      "sharing": {
+        "mode": "auto"
+      }
+    },
+    {
+      "key": 24,
+      "kind": "port",
+      "id": "out",
+      "domain": "ordinary",
+      "parent": 22,
+      "roles": [],
+      "classes": [],
+      "owner": 22,
+      "origin": "explicit",
+      "side": "right",
+      "cardinality": "many",
+      "sharing": {
+        "mode": "auto"
+      }
+    },
+    {
+      "key": 25,
+      "kind": "layout",
+      "id": null,
+      "domain": "ordinary",
+      "parent": 15,
+      "roles": [],
+      "classes": [],
+      "container": 15,
+      "members": [
+        16,
+        19,
+        22
+      ],
+      "strategy": {
+        "kind": "row"
+      },
+      "order": {
+        "kind": "prefer-source"
+      },
+      "gap": "medium"
+    },
+    {
+      "key": 26,
+      "kind": "layout",
+      "id": null,
+      "domain": "ordinary",
+      "parent": 14,
+      "roles": [],
+      "classes": [],
+      "container": 14,
+      "members": [
+        15
+      ],
+      "strategy": {
+        "kind": "column"
+      },
+      "order": {
+        "kind": "prefer-source"
+      }
+    },
+    {
+      "key": 27,
+      "kind": "object",
+      "id": "monitor",
+      "domain": "ordinary",
+      "parent": 2,
+      "roles": [
+        "stage"
+      ],
+      "classes": [],
+      "orientation": 0,
+      "content": [
+        {
+          "kind": "text",
+          "value": "Monitor",
+          "role": "label"
+        }
+      ],
+      "children": [],
+      "ports": [
+        28,
+        29
+      ]
+    },
+    {
+      "key": 28,
+      "kind": "port",
+      "id": "upright-probe",
+      "domain": "ordinary",
+      "parent": 27,
+      "roles": [],
+      "classes": [],
+      "owner": 27,
+      "origin": "explicit",
+      "side": "left",
+      "cardinality": "many",
+      "sharing": {
+        "mode": "auto"
+      }
+    },
+    {
+      "key": 29,
+      "kind": "port",
+      "id": "rotated-probe",
+      "domain": "ordinary",
+      "parent": 27,
+      "roles": [],
+      "classes": [],
+      "owner": 27,
+      "origin": "explicit",
+      "side": "left",
+      "cardinality": "many",
+      "sharing": {
+        "mode": "auto"
+      }
+    },
+    {
+      "key": 30,
+      "kind": "port-group",
+      "id": "probes",
+      "domain": "ordinary",
+      "parent": 27,
+      "roles": [],
+      "classes": [],
+      "owner": 27,
+      "members": [
+        28,
+        29
+      ],
+      "order": "prefer-source",
+      "affinity": "separate"
+    },
+    {
+      "key": 31,
+      "kind": "layout",
+      "id": null,
+      "domain": "ordinary",
+      "parent": 2,
+      "roles": [],
+      "classes": [],
+      "container": 2,
+      "members": [
+        3,
+        14,
+        27
+      ],
+      "strategy": {
+        "kind": "row"
+      },
+      "order": {
+        "kind": "prefer-source"
+      },
+      "align": "center",
+      "gap": "xlarge"
+    },
+    {
+      "key": 32,
+      "kind": "layout",
+      "id": null,
+      "domain": "ordinary",
+      "parent": 1,
+      "roles": [],
+      "classes": [],
+      "container": 1,
+      "members": [
+        2
+      ],
+      "strategy": {
+        "kind": "column"
+      },
+      "order": {
+        "kind": "prefer-source"
+      }
+    },
+    {
+      "key": 33,
+      "kind": "line",
+      "id": "probe-upright",
+      "domain": "ordinary",
+      "parent": 1,
+      "roles": [],
+      "classes": [
+        "probe"
+      ],
+      "ends": [
+        {
+          "target": {
+            "kind": "path",
+            "path": [
+              2,
+              27
+            ],
+            "onUnmaterialized": "truncate"
+          },
+          "dock": {
+            "kind": "port",
+            "port": 28
+          },
+          "labels": []
+        },
+        {
+          "target": {
+            "kind": "path",
+            "path": [
+              2,
+              3,
+              7
+            ],
+            "onUnmaterialized": "truncate"
+          },
+          "dock": {
+            "kind": "line-owned",
+            "line": 33,
+            "end": 1
+          },
+          "labels": []
+        }
+      ],
+      "heads": [
+        "none",
+        "arrow"
+      ],
+      "segments": [
+        34
+      ],
+      "space": "reserve",
+      "avoid": [
+        {
+          "kind": "gap",
+          "between": [
+            3,
+            14
+          ]
+        }
+      ]
+    },
+    {
+      "key": 34,
+      "kind": "segment",
+      "id": null,
+      "domain": "ordinary",
+      "parent": 33,
+      "roles": [],
+      "classes": [],
+      "line": 33,
+      "origin": "implicit",
+      "form": {
+        "kind": "traversal",
+        "scope": 3,
+        "role": "enter"
+      },
+      "labels": []
+    },
+    {
+      "key": 35,
+      "kind": "line",
+      "id": "probe-rotated",
+      "domain": "ordinary",
+      "parent": 1,
+      "roles": [],
+      "classes": [
+        "probe"
+      ],
+      "ends": [
+        {
+          "target": {
+            "kind": "path",
+            "path": [
+              2,
+              27
+            ],
+            "onUnmaterialized": "truncate"
+          },
+          "dock": {
+            "kind": "port",
+            "port": 29
+          },
+          "labels": []
+        },
+        {
+          "target": {
+            "kind": "path",
+            "path": [
+              2,
+              14,
+              15,
+              19
+            ],
+            "onUnmaterialized": "truncate"
+          },
+          "dock": {
+            "kind": "line-owned",
+            "line": 35,
+            "end": 1
+          },
+          "labels": []
+        }
+      ],
+      "heads": [
+        "none",
+        "arrow"
+      ],
+      "segments": [
+        36,
+        37
+      ],
+      "space": "reserve",
+      "avoid": []
+    },
+    {
+      "key": 36,
+      "kind": "segment",
+      "id": null,
+      "domain": "ordinary",
+      "parent": 35,
+      "roles": [],
+      "classes": [],
+      "line": 35,
+      "origin": "implicit",
+      "form": {
+        "kind": "traversal",
+        "scope": 14,
+        "role": "enter"
+      },
+      "labels": []
+    },
+    {
+      "key": 37,
+      "kind": "segment",
+      "id": null,
+      "domain": "ordinary",
+      "parent": 35,
+      "roles": [],
+      "classes": [],
+      "line": 35,
+      "origin": "implicit",
+      "form": {
+        "kind": "traversal",
+        "scope": 15,
+        "role": "enter"
+      },
+      "labels": []
+    },
+    {
+      "key": 38,
+      "kind": "line",
+      "id": "audit-upright",
+      "domain": "ordinary",
+      "parent": 1,
+      "roles": [],
+      "classes": [
+        "data"
+      ],
+      "ends": [
+        {
+          "target": {
+            "kind": "path",
+            "path": [
+              2,
+              3,
+              10
+            ],
+            "onUnmaterialized": "truncate"
+          },
+          "dock": {
+            "kind": "port",
+            "port": 12
+          },
+          "labels": []
+        },
+        {
+          "target": {
+            "kind": "path",
+            "path": [
+              2,
+              27
+            ],
+            "onUnmaterialized": "truncate"
+          },
+          "dock": {
+            "kind": "line-owned",
+            "line": 38,
+            "end": 1
+          },
+          "labels": []
+        }
+      ],
+      "heads": [
+        "none",
+        "arrow"
+      ],
+      "segments": [
+        39,
+        40
+      ],
+      "space": "reserve",
+      "avoid": [],
+      "share": {
+        "source": {
+          "kind": "explicit",
+          "id": "audit",
+          "parent": 1
+        },
+        "mode": "bundle"
+      }
+    },
+    {
+      "key": 39,
+      "kind": "segment",
+      "id": null,
+      "domain": "ordinary",
+      "parent": 38,
+      "roles": [],
+      "classes": [],
+      "line": 38,
+      "origin": "implicit",
+      "form": {
+        "kind": "traversal",
+        "scope": 3,
+        "role": "exit"
+      },
+      "labels": []
+    },
+    {
+      "key": 40,
+      "kind": "segment",
+      "id": null,
+      "domain": "ordinary",
+      "parent": 38,
+      "roles": [],
+      "classes": [],
+      "line": 38,
+      "origin": "explicit",
+      "form": {
+        "kind": "through",
+        "region": {
+          "kind": "gap",
+          "between": [
+            14,
+            27
+          ]
+        }
+      },
+      "labels": []
+    },
+    {
+      "key": 41,
+      "kind": "line",
+      "id": "audit-rotated",
+      "domain": "ordinary",
+      "parent": 1,
+      "roles": [],
+      "classes": [
+        "data"
+      ],
+      "ends": [
+        {
+          "target": {
+            "kind": "path",
+            "path": [
+              2,
+              14,
+              15,
+              22
+            ],
+            "onUnmaterialized": "truncate"
+          },
+          "dock": {
+            "kind": "port",
+            "port": 24
+          },
+          "labels": []
+        },
+        {
+          "target": {
+            "kind": "path",
+            "path": [
+              2,
+              27
+            ],
+            "onUnmaterialized": "truncate"
+          },
+          "dock": {
+            "kind": "line-owned",
+            "line": 41,
+            "end": 1
+          },
+          "labels": []
+        }
+      ],
+      "heads": [
+        "none",
+        "arrow"
+      ],
+      "segments": [
+        42,
+        43,
+        44
+      ],
+      "space": "reserve",
+      "avoid": [],
+      "share": {
+        "source": {
+          "kind": "explicit",
+          "id": "audit",
+          "parent": 1
+        },
+        "mode": "bundle"
+      }
+    },
+    {
+      "key": 42,
+      "kind": "segment",
+      "id": null,
+      "domain": "ordinary",
+      "parent": 41,
+      "roles": [],
+      "classes": [],
+      "line": 41,
+      "origin": "implicit",
+      "form": {
+        "kind": "traversal",
+        "scope": 15,
+        "role": "exit"
+      },
+      "labels": []
+    },
+    {
+      "key": 43,
+      "kind": "segment",
+      "id": null,
+      "domain": "ordinary",
+      "parent": 41,
+      "roles": [],
+      "classes": [],
+      "line": 41,
+      "origin": "implicit",
+      "form": {
+        "kind": "traversal",
+        "scope": 14,
+        "role": "exit"
+      },
+      "labels": []
+    },
+    {
+      "key": 44,
+      "kind": "segment",
+      "id": null,
+      "domain": "ordinary",
+      "parent": 41,
+      "roles": [],
+      "classes": [],
+      "line": 41,
+      "origin": "explicit",
+      "form": {
+        "kind": "through",
+        "region": {
+          "kind": "gap",
+          "between": [
+            14,
+            27
+          ]
+        }
+      },
+      "labels": []
+    },
+    {
+      "key": 45,
+      "kind": "line",
+      "id": null,
+      "domain": "ordinary",
+      "parent": 3,
+      "roles": [],
+      "classes": [
+        "data"
+      ],
+      "ends": [
+        {
+          "target": {
+            "kind": "path",
+            "path": [
+              2,
+              3,
+              4
+            ],
+            "onUnmaterialized": "truncate"
+          },
+          "dock": {
+            "kind": "port",
+            "port": 6
+          },
+          "labels": []
+        },
+        {
+          "target": {
+            "kind": "path",
+            "path": [
+              2,
+              3,
+              7
+            ],
+            "onUnmaterialized": "truncate"
+          },
+          "dock": {
+            "kind": "port",
+            "port": 8
+          },
+          "labels": []
+        }
+      ],
+      "heads": [
+        "none",
+        "arrow"
+      ],
+      "segments": [],
+      "space": "reserve",
+      "avoid": []
+    },
+    {
+      "key": 46,
+      "kind": "line",
+      "id": null,
+      "domain": "ordinary",
+      "parent": 3,
+      "roles": [],
+      "classes": [
+        "data"
+      ],
+      "ends": [
+        {
+          "target": {
+            "kind": "path",
+            "path": [
+              2,
+              3,
+              7
+            ],
+            "onUnmaterialized": "truncate"
+          },
+          "dock": {
+            "kind": "port",
+            "port": 9
+          },
+          "labels": []
+        },
+        {
+          "target": {
+            "kind": "path",
+            "path": [
+              2,
+              3,
+              10
+            ],
+            "onUnmaterialized": "truncate"
+          },
+          "dock": {
+            "kind": "port",
+            "port": 11
+          },
+          "labels": []
+        }
+      ],
+      "heads": [
+        "none",
+        "arrow"
+      ],
+      "segments": [],
+      "space": "reserve",
+      "avoid": []
+    },
+    {
+      "key": 47,
+      "kind": "line",
+      "id": null,
+      "domain": "ordinary",
+      "parent": 15,
+      "roles": [],
+      "classes": [
+        "data"
+      ],
+      "ends": [
+        {
+          "target": {
+            "kind": "path",
+            "path": [
+              2,
+              14,
+              15,
+              16
+            ],
+            "onUnmaterialized": "truncate"
+          },
+          "dock": {
+            "kind": "port",
+            "port": 18
+          },
+          "labels": []
+        },
+        {
+          "target": {
+            "kind": "path",
+            "path": [
+              2,
+              14,
+              15,
+              19
+            ],
+            "onUnmaterialized": "truncate"
+          },
+          "dock": {
+            "kind": "port",
+            "port": 20
+          },
+          "labels": []
+        }
+      ],
+      "heads": [
+        "none",
+        "arrow"
+      ],
+      "segments": [],
+      "space": "reserve",
+      "avoid": []
+    },
+    {
+      "key": 48,
+      "kind": "line",
+      "id": null,
+      "domain": "ordinary",
+      "parent": 15,
+      "roles": [],
+      "classes": [
+        "data"
+      ],
+      "ends": [
+        {
+          "target": {
+            "kind": "path",
+            "path": [
+              2,
+              14,
+              15,
+              19
+            ],
+            "onUnmaterialized": "truncate"
+          },
+          "dock": {
+            "kind": "port",
+            "port": 21
+          },
+          "labels": []
+        },
+        {
+          "target": {
+            "kind": "path",
+            "path": [
+              2,
+              14,
+              15,
+              22
+            ],
+            "onUnmaterialized": "truncate"
+          },
+          "dock": {
+            "kind": "port",
+            "port": 23
+          },
+          "labels": []
+        }
+      ],
+      "heads": [
+        "none",
+        "arrow"
+      ],
+      "segments": [],
+      "space": "reserve",
+      "avoid": []
+    },
+    {
+      "key": 49,
+      "kind": "token-set",
+      "id": null,
+      "domain": "ordinary",
+      "parent": 1,
+      "roles": [],
+      "classes": [],
+      "layer": "document",
+      "values": {
+        "flow-blue": "#2563eb",
+        "probe-gray": "#6b7280"
+      }
+    },
+    {
+      "key": 50,
+      "kind": "rule",
+      "id": null,
+      "domain": "ordinary",
+      "parent": 1,
+      "roles": [],
+      "classes": [],
+      "layer": "document",
+      "selector": {
+        "steps": [
+          {
+            "roles": [
+              "stage"
+            ]
+          }
+        ],
+        "combinators": []
+      },
+      "declarations": {
+        "stroke": "ink"
+      }
+    },
+    {
+      "key": 51,
+      "kind": "rule",
+      "id": null,
+      "domain": "ordinary",
+      "parent": 1,
+      "roles": [],
+      "classes": [],
+      "layer": "document",
+      "selector": {
+        "steps": [
+          {
+            "classes": [
+              "data"
+            ]
+          }
+        ],
+        "combinators": []
+      },
+      "declarations": {
+        "stroke": "flow-blue"
+      }
+    },
+    {
+      "key": 52,
+      "kind": "rule",
+      "id": null,
+      "domain": "ordinary",
+      "parent": 1,
+      "roles": [],
+      "classes": [],
+      "layer": "document",
+      "selector": {
+        "steps": [
+          {
+            "classes": [
+              "probe"
+            ]
+          }
+        ],
+        "combinators": []
+      },
+      "declarations": {
+        "stroke": "probe-gray",
+        "dash": "dashed"
+      }
+    }
+  ],
+  "paint": []
+}
