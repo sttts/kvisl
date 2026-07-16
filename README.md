@@ -20,7 +20,8 @@ Excalmermaid instead treats a drawing as a composable logical model:
 - most route segments are inferred;
 - explicit segments pin only the semantically important parts of a route;
 - whitespace created by layout is also the routing plane;
-- components can provide several context- and detail-sensitive views;
+- presentation comes from typed rules in a layered cascade — renderer, theme, library, document, inline — keyed by roles and classes;
+- components can provide several context- and detail-sensitive views, selected media-query-style;
 - one model can support overview, detailed, poster, tiled, and infinite-canvas rendering.
 
 ## Core principles
@@ -33,7 +34,7 @@ Components are ordinary TypeScript functions. Callers normally attach lines thro
 
 High-level architecture and low-level implementation detail coexist in the same logical graph. A component may provide named meta views for a symbol, summary, specialized projection, or detailed internals. Unselected view templates are invisible to normal paths and do not create active objects or a second component identity.
 
-A renderer creates context for each component instance, including target medium, page or viewport, available space, purpose, state, and capabilities. Views derive scores from that context. In `maximum-that-fits` mode the renderer works outside-in, instantiates the highest-scoring viable branch, and conditionally adapts that branch before layout and routing.
+A renderer creates context for each component instance, including target medium, page or viewport, available space, purpose, state, and capabilities. View selection works like media and container queries: declaration order is preference order, and the first view whose condition holds and whose footprint fits wins. In `maximum-that-fits` mode the renderer works outside-in, instantiates that branch, and conditionally adapts it before layout and routing.
 
 ### No coordinate authoring
 
@@ -51,7 +52,7 @@ TSX is evaluated once and normalized into a versioned, language-neutral Logical 
 diagram.tsx
     -> TSX evaluation and component expansion
     -> Logical IR
-    -> renderer context, view scoring, and meta-branch materialization
+    -> renderer context, first-fit view selection, and meta-branch materialization
     -> Projection IR
     -> layout and routing
     -> Solved IR
@@ -73,28 +74,23 @@ function Service({ id, request }: ServiceProps) {
     <Scope id={id}>
       <Port id="request" side="left" bind={request} />
 
-      <View
-        id="summary"
-        detail={0}
-        score={score(0, boost(100, lte(context("allocation.inlineSize"), 80)))}
-        footprint={{ minWidth: 30, minHeight: 15 }}
-      >
-        <Node id="card">Service</Node>
-        <PortPlacement port="request" on="card" side="left" />
-      </View>
-
+      {/* declaration order is preference order: first viable view wins */}
       <View
         id="internals"
         detail={2}
-        score={score(10, boost(100, gte(context("allocation.inlineSize"), 70)))}
+        requires={gte(context("allocation.inlineSize"), 70)}
         footprint={{ minWidth: 90, minHeight: 60 }}
-        fallback="summary"
       >
         <Column id="internal-layout">
           <Node id="api">API</Node>
           <Scope id="workers">{/* detailed render branch */}</Scope>
         </Column>
         <PortPlacement port="request" on="internal-layout/api" side="left" />
+      </View>
+
+      <View id="summary" detail={0} footprint={{ minWidth: 30, minHeight: 15 }}>
+        <Node id="card">Service</Node>
+        <PortPlacement port="request" on="card" side="left" />
       </View>
     </Scope>
   );

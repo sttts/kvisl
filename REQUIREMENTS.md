@@ -35,17 +35,16 @@ The language MUST support projections or views that select, collapse, expand, fi
 
 A component MUST be able to provide several named renderable views of the same logical identity. A `View` is a hidden meta branch in the component's object tree: its descendants are a template, not ordinary already-active diagram objects. A renderer materializes a selected view branch into a target-specific render instance before that instance is laid out, routed, and painted. Changing the selected branch MUST NOT change the component's canonical identity or invalidate lines attached to its ports.
 
-View selection MUST be more general than a single level-of-detail number. A view MAY declare:
+View selection MUST work like media and container queries: declaration order is preference order, and the renderer materializes the **first** view whose condition holds, whose footprint fits the allocation, and which the render policy permits. There is no score arithmetic and no tie-breaking rule — order decides. A view MAY declare:
 
-- an ordinal `detail` value;
-- score adjustments based on purpose, audience, medium, state, allocation, or renderer capability;
+- an ordinal `detail` value used as a policy filter;
+- a `requires` condition over purpose, audience, medium, state, allocation, or renderer capability;
 - minimum and preferred footprint and aspect ratio;
-- minimum readable scale or other legibility requirements;
-- an author preference or explicit fallback relation.
+- minimum readable scale or other legibility requirements.
 
-Selectors other than `detail` MUST be extensible without requiring a new core diagram type. A render request MUST be able to force a named view, constrain selector values, or request the greatest useful detail that fits a target. Logical IR retains view templates; a renderer-specific projection step records their concrete instances.
+Condition vocabulary MUST be extensible without requiring a new core diagram type. A render request MUST be able to force a named view, constrain the context, or request the greatest useful detail that fits a target. Logical IR retains view templates; a renderer-specific projection step records their concrete instances.
 
-A level-of-detail-capable renderer MUST provide an outside-in materialization strategy. It starts with the requested canvas, page, tile, or viewport, allocates space to outer components, and recursively instantiates the highest-utility eligible view that fits each allocation. It then repeats the process inside the instantiated branch. If a detailed branch violates footprint, readability, routing, or hard layout constraints, the renderer MUST be able to discard that projection instance and instantiate a less demanding fallback. Given identical model, target, conditions, policy, capabilities, and solver version, materialization MUST be deterministic.
+A level-of-detail-capable renderer MUST provide an outside-in materialization strategy. It starts with the requested canvas, page, tile, or viewport, allocates space to outer components, and recursively instantiates the first eligible view that fits each allocation. It then repeats the process inside the instantiated branch. If a selected branch violates footprint, readability, routing, or hard layout constraints, the renderer MUST discard that projection instance and continue with the next view in declaration order. Given identical model, target, conditions, policy, capabilities, and solver version, materialization MUST be deterministic.
 
 The authoring model MUST leave room for responsive meta branches comparable to print styles, media queries, and container queries on the web. Target-dependent conditions MUST be represented as typed, serializable data evaluated during renderer materialization, never as arbitrary JavaScript callbacks executed by Go or Rust renderers. Conditions MAY inspect a bounded rendering context such as medium, page format, viewport class, allocated inline or block size, purpose, semantic state, and renderer capabilities. They MUST NOT inspect unconstrained mutable process state.
 
@@ -160,12 +159,10 @@ Content values that do not own diagram entities, such as text runs, need no ID. 
 
 The precise component names and property forms remain subject to design. Normalized semantics MUST include at least these categories (shapes in [MODEL.md](MODEL.md)):
 
-- `Diagram`: document root, global metadata, root frame;
-- `Scope`: containment region, semantic boundary, local orientation;
-- `Element` (`Node`): visible or intrinsically measurable object;
-- `Layout`: arrangement of a set of objects;
-- `View`: named alternative representation of one component or scope;
-- `Port`: symmetric attachment point on an element or scope;
+- `Object`: the one structural primitive — optional shape, content, label, ports, children, orientation, anchor. `Diagram`, `Scope`, and `Node` are authoring shorthands over it with different defaults, not separate primitives;
+- `Layout`: arrangement of a set of objects, with ordering, alignment, and distribution;
+- `View`: named alternative representation of one component object, selected first-fit in declaration order;
+- `Port`: symmetric attachment point on an object;
 - `Dock`: the attachment identity of one line end; either a shared named port or a line-owned automatic dock;
 - `PortPlacement`: view-template mapping from a stable owner port to one rendered anchor;
 - `PortGroup`: adjacency, ordering, and affinity rules for ports;
@@ -173,12 +170,12 @@ The precise component names and property forms remain subject to design. Normali
 - `Line`: symmetric semantic connection built from segments;
 - `End`: structured declaration of one line end with its reference, head, dock style, and end labels;
 - `Segment`: one leg of a line, explicit or implicit, labelable;
-- `Note`: annotation placed by an anchor relation;
+- `Rule`: typed styling rule — selector, optional condition, declarations — in a layered cascade;
 - `Constraint`: hard requirement or soft preference;
-- `Condition`: serializable predicate controlling renderer materialization;
+- `Condition`: serializable predicate shared by view selection, template conditionals, and conditional rules;
 - `PaintRelation`: drawing order independent of containment.
 
-Diagram types such as `SequenceDiagram`, `MindMap`, `EntityRelationship`, or `KubernetesCluster` MAY exist as library components, but they MUST NOT be required core primitives.
+Annotations (`Note`), titles, legends, and footers MUST be library components built on the anchoring capability of ordinary objects (section 10), not core primitives. Diagram types such as `SequenceDiagram`, `MindMap`, `EntityRelationship`, or `KubernetesCluster` MAY exist as library components, but they MUST NOT be required core primitives.
 
 ## 4. Containers, containment, and relative names
 
@@ -218,7 +215,9 @@ The reference model MUST address at least:
 - an implicit whitespace region (`gap(a, b)`, `padding(container, side)`) or a named corridor;
 - a layout, line, segment, or constraint-relevant region when referencable.
 
-References MAY use strings, typed `ref()` helpers, or template literals. If several forms are offered, all MUST normalize to the same internal reference model.
+References MAY use strings, typed `ref()` helpers, or template literals. If several forms are offered, all MUST normalize to the same internal reference model. Deep paths grow with every named container; authors SHOULD bind `ref()` values to TypeScript variables and compose them (`order.port("customer")`) instead of repeating long strings.
+
+A component MUST be able to reference its own root region through a `self` alias — `padding(self, "left")` — instead of ascending and re-entering by its externally assigned ID, which would couple the component to its position in the parent.
 
 `/` MUST descend through named ordinary containers, `..` MUST ascend one named ordinary container, and `.` MUST select a named port on an entity. The exact typed helper API may evolve, but these relationships MUST normalize unambiguously. Ordinary lookup MUST NOT descend into `View`, `When`, `Switch`, or their unmaterialized template descendants. A normal path therefore cannot accidentally depend on whichever branch a renderer later selects.
 
@@ -230,7 +229,7 @@ JSX nesting SHOULD express containment by default. Containment alone MUST NOT co
 
 An object MUST have exactly one containment parent. Additional layout, routing, and paint relations MAY reference any number of other objects.
 
-Scopes MUST be full endpoints: they can carry ports, terminate lines, and anchor notes.
+Objects with children MUST be full endpoints: they can carry ports, terminate lines, and anchor annotations.
 
 All ordinary intermediate containers on a deep path MUST be author-addressable. A normalizer MUST NOT flatten explicit layout containers out of the author identity model. It MUST preserve view and conditional containers in the separate meta tree without exposing them through ordinary paths.
 
@@ -250,7 +249,9 @@ A scope MUST be able to declare its orientation relative to its parent frame in 
 
 The solver MUST NOT change orientations on its own; automatic orientation MAY be added later as an explicit opt-in. Text SHOULD stay physically upright by default, with an explicit property to rotate it with the frame.
 
-## 6. Elements, content, and sizing
+## 6. Objects, content, and sizing
+
+There MUST be exactly one structural primitive: an object that may combine, in any mixture, a shape, structured content, a boundary label, ports, contained children with a layout, a local orientation, and an anchor relation. `Node` (shape with content, no children) and `Scope` (container with children and label) MUST be authoring shorthands over that primitive with different defaults — a `Scope` with a shape and a `Node` that owns nested entities are both ordinary objects, and neither introduces a second entity kind.
 
 The authoring surface MUST support at least:
 
@@ -258,9 +259,11 @@ The authoring surface MUST support at least:
 - basic shapes;
 - containers with visible or invisible boundaries;
 - icons and images;
-- semantic roles from which a theme can derive presentation.
+- semantic roles and classes from which rules derive presentation.
 
-The element model MUST support intrinsic sizing. Text measurement, wrapping, padding, minimum and maximum size, and size derived from children MUST be expressible or style-derived.
+The object model MUST support intrinsic sizing. Text measurement, wrapping, padding, minimum and maximum size, and size derived from children MUST be expressible or rule-derived.
+
+Text MUST normalize context-dependently: `<Text>` inside an object becomes a content entry of that object; `<Text>` in member position becomes an object with a text shape; a `label` prop becomes a content entry with role `label`. All three feed the same content model.
 
 The grammar SHOULD keep simple cases concise:
 
@@ -301,7 +304,11 @@ The exact set of shape primitives remains open. Extensions MUST be namespaced an
 
 Layouts MUST compose recursively. At least the following strategies SHOULD be available: Row, Column, Stack, Overlay, Grid, Tree, Radial, Graph or Layered, and unconstrained arrangement governed by constraints.
 
-A layout MUST have an explicit member set. JSX children MAY be shorthand for that set. Layout MAY appear both as a component (`<Row id="services">...</Row>`) and as a property (`<Scope id="services" layout={{ kind: "row" }}>`); both forms MUST normalize identically.
+A layout MUST have an explicit member set. JSX children MAY be shorthand for that set with a fixed carve-out: only placeable objects become members. Lines, segments, ports, port groups, corridors, constraints, rules, and anchored objects MAY be declared among the same children but MUST NOT enter the member set. An object with an anchor leaves the member set; removing the anchor restores membership.
+
+Layout MAY appear both as a component (`<Row id="services">...</Row>`) and as a property (`<Scope id="services" layout={{ kind: "row" }}>`); both forms MUST normalize identically.
+
+A layout MUST be able to align members on its cross axis (`start`, `center`, `end`, `stretch`) and distribute them on its main axis (`start`, `center`, `end`, `space-between`, `space-around`). Alignment and distribution are layout parameters in the IR, not styles; their defaults MAY come from rules like other metrics.
 
 ### 7.2 Ordering
 
@@ -331,29 +338,12 @@ A component or scope MAY own several `View` declarations. Every view MUST have a
 <Scope id="cluster" role="serving-cluster">
   <Port id="request" side="left" />
 
-  <View
-    id="compact"
-    detail={0}
-    score={score(
-      0,
-      boost(100, lte(context("allocation.inlineSize"), 90)),
-      boost(20, eq(context("medium"), "print")),
-    )}
-    footprint={{ minWidth: 35, minHeight: 20 }}
-  >
-    <Node id="card">Cluster</Node>
-    <PortPlacement port="request" on="card" side="left" />
-  </View>
-
+  {/* declaration order is preference order: first viable view wins */}
   <View
     id="internals"
     detail={2}
-    score={score(
-      10,
-      boost(100, gte(context("allocation.inlineSize"), 70)),
-    )}
+    requires={gte(context("allocation.inlineSize"), 70)}
     footprint={{ minWidth: 100, minHeight: 70 }}
-    fallback="compact"
   >
     <Column id="internal-layout">
       <Node id="api">Gateway</Node>
@@ -364,10 +354,15 @@ A component or scope MAY own several `View` declarations. Every view MUST have a
     </Column>
     <PortPlacement port="request" on="internal-layout/api" side="left" />
   </View>
+
+  <View id="compact" detail={0} footprint={{ minWidth: 35, minHeight: 20 }}>
+    <Node id="card">Cluster</Node>
+    <PortPlacement port="request" on="card" side="left" />
+  </View>
 </Scope>
 ```
 
-Here `context()`, `score()`, `boost()`, and the comparison helpers construct typed, serializable expression values; they are not callbacks. The renderer creates the context for each component instance. A view's base score receives conditional additions or penalties from that context, and the highest-scoring viable view is instantiated. The exact convenience syntax remains open, but its normalized form MUST be language-neutral.
+Here `context()` and the comparison helpers construct typed, serializable condition values; they are not callbacks. The renderer creates the context for each component instance, walks the views in declaration order, and instantiates the first one whose `requires` condition holds and whose footprint fits — exactly the first-match semantics of a media query. A view without `requires` is the unconditional tail of the list. The exact convenience syntax remains open, but its normalized form MUST be language-neutral.
 
 The declarations `compact/card` and `internals/internal-layout/api` are branch-local template identities, not ordinary paths below `cluster`. Their materialized render instances receive renderer-local instance keys derived from the owning component instance, selected view, template-local identity, render target, and projection generation. Reusing a view template MUST NOT reuse one mutable render object across component instances.
 
@@ -392,11 +387,11 @@ This endpoint has the common prefix `api`. If the renderer instantiated `foo` wi
 
 A compact string spelling such as `api.{foo#view:abc, foo:bar}` MAY exist as documented sugar, but it MUST normalize to exactly the same structured value, and it never makes the meta tree visible to ordinary path lookup. The normalized representation MUST keep common prefix, cases, selected-view predicates, suffixes, and truncation policy structurally rather than preserve an opaque string. This mechanism SHOULD remain exceptional; stable component ports plus `PortPlacement` are the composable default.
 
-The renderer owns materialization. For every component instance it creates an immutable context from the render request, inherited context, renderer capabilities, semantic state, and current outside-in allocation. Views evaluate their score expressions against that context. The renderer then instantiates the winning viable branch into Projection IR, evaluates conditional adjustments inside that branch, and submits the projection to layout and routing. A solve may reject a tentative branch and ask the renderer planner to instantiate its fallback. Solved IR MUST retain the selected view, context snapshot or hash, score explanation, and template provenance for every materialized instance.
+The renderer owns materialization. For every component instance it creates an immutable context from the render request, inherited context, renderer capabilities, semantic state, and current outside-in allocation. It evaluates the views' conditions against that context in declaration order, instantiates the first viable branch into Projection IR, evaluates conditional adjustments inside that branch, and submits the projection to layout and routing. A solve may reject a tentative branch, in which case the renderer planner continues with the next view in order. Solved IR MUST retain the selected view, context snapshot or hash, the selection explanation (which views were filtered, failed, or rejected), and template provenance for every materialized instance.
 
 ### 7.5 Responsive conditions and conditional paths
 
-The renderer-context expression model MUST support numeric score composition, conditional score adjustments, Boolean composition (`all`, `any`, `not`), and typed comparisons over a bounded context. Context keys SHOULD include:
+The renderer-context condition model MUST support Boolean composition (`all`, `any`, `not`) and typed comparisons over a bounded context. One condition model MUST serve all three consumers: view selection, `When`/`Switch` template conditionals, and conditional styling rules (section 12). Context keys SHOULD include:
 
 - target medium and page or viewport class;
 - allocated inline size, block size, and aspect ratio;
@@ -407,7 +402,7 @@ Unknown context keys or operators MUST be namespaced extensions. Conditions MUST
 
 After a view wins, the same context MUST be available to conditional adjustments inside its template. The model SHOULD permit `when` on view-template entities, lines, and segments, plus explicit `When` or `Switch` meta containers for larger alternatives. A conditional line or segment exists in Projection IR only when its condition holds. Removing it MUST still preserve port-cardinality and required-connectivity invariants or produce a diagnostic.
 
-CSS media queries and container queries are design precedents, not required source syntax. A later CSS-like rule layer MAY compile to the same condition tree. The core contract is the normalized condition semantics, not a particular textual mini-language.
+CSS media queries and container queries are the design precedent: conditions read the outside-in allocation and the render request, never solved geometry, so no selection or styling cycle over sizes can arise. The core contract is the normalized condition semantics, not a particular textual mini-language.
 
 ## 8. Ports and components
 
@@ -589,9 +584,11 @@ The grammar and IR MUST keep these levels separate:
 
 Several semantic lines MAY map to one geometric trunk. Concrete portals, tracks, bends, and curves MAY first appear in Solved IR.
 
-## 10. Notes and anchors
+## 10. Anchoring and frames
 
-Annotations MUST be placeable by anchor relation rather than only by layout membership: a `Note` names an anchor entity or region (defaulting to its declaring parent) and a placement relative to it in the anchor's local frame. A note without an anchor MAY participate in normal layout like an element. Page furniture — titles, legends, footers — SHOULD be library components on the same mechanism.
+Anchoring MUST be a capability of every object, not a separate entity kind: an object MAY name an anchor entity or region (defaulting to its declaring parent) and a structured placement relative to it in the anchor's local frame (`{ area: inside | outside, side, align }`). An anchored object leaves layout membership; without an anchor it participates in layout normally. `Note`, `Title`, `Legend`, and other page furniture MUST be library components built on this capability plus roles for the theme.
+
+A container MUST be able to visually enclose objects it does not contain: a boundary object plus an `inside` constraint listing the members. The container's size MUST derive from the constrained members plus padding, and it MUST paint behind them by default. Containment, layout membership, and addresses of the framed members are unaffected. This is the model for UML combined fragments and similar overlays.
 
 ## 11. Constraints
 
@@ -604,38 +601,72 @@ Every constraint MUST have a strength:
 
 At least these constraint families SHOULD be available:
 
-- `before` and `after`, including for ports, corridor tracks, and corridors within a region;
+- `order` — one relation with three bases: position within a layout, spatial order along a local axis, or track order within a corridor region. The conveniences `below`, `above`, and `between` MUST be accepted as sugar normalizing to spatial `order` relations, and port, line, and corridor-track ordering use the same family;
 - `adjacent`;
 - `align`;
-- `distribute`;
 - `sameWidth`, `sameHeight`, and `sameSize`;
 - `near`;
-- `inside`;
-- `extent`: stretch one element along an axis between two anchor entities;
+- `inside`, also the basis of frames (section 10);
+- `extent`: stretch one object along an axis between two anchor entities;
 - `avoidOverlap`;
 - `avoidCrossing`;
 - routing through or outside a region;
 - paint order before or behind an object.
 
-The `extent` family exists so that span-shaped visuals — activation bars on a lifeline, fork and join bars spanning their flows, brackets — remain honest elements stretched between anchors instead of thick overlay lines.
+The `extent` family exists so that span-shaped visuals — activation bars on a lifeline, fork and join bars spanning their flows, brackets — remain honest objects stretched between anchors instead of thick overlay lines.
 
 Partial-order constraints MUST be preferred. Objects not mentioned remain unconstrained. Cycles in hard ordering constraints MUST produce diagnostics.
 
-## 12. Styling and presentation
+## 12. Styling: rules, cascade, and conditions
 
-Semantics and presentation MUST remain separate. An element SHOULD carry roles and classes:
+Semantics and presentation MUST remain separate. Structure carries roles and classes:
 
 ```tsx
 <Node id="database" role="storage" className="critical" />
 ```
 
-Themes or CSS-like rules MAY derive shape, color, typography, padding, roughness, and other presentation properties from them.
+### 12.1 Rules and the cascade
 
-Inline styles MAY be supported. Properties that influence intrinsic size or routing space MUST be resolved before layout. Purely painterly properties MAY be applied later.
+Presentation MUST come from typed **rules**: a selector, an optional condition, and a set of declarations. Rules MUST live in a fixed layered cascade:
 
-Dock rendering MUST use the cascade defined in section 8.1. The resolved style MUST retain non-conflicting contributions from both the dock and the line, with line style taking precedence for conflicting properties. Geometry-affecting dock properties such as marker size or stroke width MUST be resolved before layout and routing reserve space for the attachment.
+```text
+renderer default < theme < library < document < inline style prop
+```
 
-Logical IR MUST NOT contain Excalidraw-specific object classes. Standard styles MUST be typed; renderer or library extensions MUST have a namespace.
+Across layers the higher layer MUST win; within one layer, later rules win. There MUST NOT be CSS-style specificity arithmetic — the layers replace it. Inline `style` props remain supported as the innermost layer. A library (for example the UML vocabulary) SHOULD ship its notation as a stylesheet in the library layer instead of hard-coding presentation into components.
+
+```tsx
+const styles = [
+  rule(role("serving-stack"), { stroke: "platform-blue" }),
+  rule(cls("reconcile"), { stroke: "reconcile-orange" }),
+  rule(within(role("phone"), role("caption")), { fontSize: 10 }),
+];
+```
+
+Typed selector helpers and any equivalent string selector form MUST normalize to the same selector model.
+
+### 12.2 Selectors and scoping
+
+Selectors MUST match on entity kind, shape, roles, classes, and IDs, combined with descendant and child combinators. Two exclusions are deliberate:
+
+- structural pseudo-classes (`nth-child`-alikes) and sibling combinators MUST NOT exist: the solver may reorder layout members, so order-dependent selectors would be unstable;
+- multi-step structural selectors MUST NOT cross **style boundaries**. A component's root container is a style boundary by default (marked during expansion; a component may opt out). Roles and classes are the public styling API that themes match across boundaries — single-step role or class selectors match everywhere.
+
+### 12.3 Conditional rules
+
+A rule MAY carry a condition from the shared condition model of section 7.5 — the media-query and container-query analog. Conditions read the render context and outside-in allocation, never solved geometry, so styling cannot create a layout cycle. A conditional rule applies only while its condition holds in the current render context.
+
+### 12.4 What rules may and may not do
+
+Rules MUST be able to set presentation properties (fill, stroke, stroke width, dash, opacity, roughness, fonts, text orientation, dock markers) and metric defaults (margin, padding, gap, minimum sizes, spacing). Properties that influence intrinsic size or routing space MUST be resolved before layout and routing; purely painterly properties MAY be applied later.
+
+Rules MUST NOT change topology, identity, layout membership, layout strategy, ports, sharing, routing, or entity existence. There is no `display: none` analog — structural alternatives belong to views and `When`. Corridor pressure and port sharing policies are semantics, not styles.
+
+Inheritable properties (fonts, stroke color, roughness, text orientation) MUST flow down containment after cascade resolution; box and metric properties MUST NOT inherit.
+
+Dock rendering MUST use the cascade defined in section 8.1 as its innermost step: the dock's resolved style is the base, the line's resolved style overlays it, and the line wins conflicts. Geometry-affecting dock properties such as marker size MUST be resolved before layout and routing reserve space for the attachment.
+
+Logical IR MUST NOT contain Excalidraw-specific object classes. All properties MUST be typed in one shared namespace with documented applicability per entity kind; renderer or library extensions MUST have a namespace.
 
 ## 13. Illustrative TSX draft
 
@@ -721,13 +752,15 @@ Normalization MUST include at least these phases:
 7. Merge all declarations for each canonical `(owner, local port ID)` and diagnose conflicting explicit properties.
 8. Resolve every required port handle and named-port endpoint to a canonical port; assign every entity-only endpoint a distinct line-owned dock identity derived from its line and end index.
 9. Resolve ordinary entity and region references without entering meta branches; normalize endpoint alternatives into common prefixes, selected-view cases, branch-local suffixes, defaults, and truncation policy.
-10. Canonicalize defaults and shorthand forms (`End` children versus `from`/`to` props, line-level labels, `heads` sugar, compartments, layout components versus properties).
-11. Weave implicit segments around explicit ones; infer least common ancestors and traversals.
-12. Derive join groups from common canonical ports without joining distinct line-owned docks, then apply port sharing policies, explicit share groups, and port-group affinity.
-13. Preserve every component view template, port-placement mapping, and normalized condition tree for renderer materialization.
-14. Assign `EntityKey` values deterministically.
-15. Perform structural and semantic validation.
-16. Emit Logical IR and optional provenance.
+10. Canonicalize defaults and shorthand forms (`Node`/`Scope`/`Diagram` to objects, `Text` and `label` to content, `End` children versus `from`/`to` props, line-level labels, `heads` sugar, compartments, `below`/`between` to spatial order, layout components versus properties).
+11. Build layout member sets from placeable children only; detach anchored objects from membership.
+12. Collect rules into their cascade layers and normalize selectors; validate selector shape and style boundaries.
+13. Weave implicit segments around explicit ones; infer least common ancestors and traversals.
+14. Derive join groups from common canonical ports without joining distinct line-owned docks, then apply port sharing policies, explicit share groups, and port-group affinity.
+15. Preserve every component view template, port-placement mapping, and normalized condition tree for renderer materialization.
+16. Assign `EntityKey` values deterministically.
+17. Perform structural and semantic validation.
+18. Emit Logical IR and optional provenance.
 
 At least these errors MUST be detected before solving:
 
@@ -750,9 +783,13 @@ At least these errors MUST be detected before solving:
 - explicit segment sequences no route can satisfy;
 - required `merge` with incompatible styles on the shared piece;
 - share groups spanning lines with no common end;
-- invalid or empty layout membership;
+- invalid or empty layout membership, or a non-placeable entity in a member set;
+- an anchored object that is simultaneously forced into layout membership, or an anchor that does not resolve;
 - cycles in hard partial orders;
 - invalid orientation values;
+- an invalid selector (structural pseudo-class, sibling combinator, or unknown matcher);
+- a rule whose declarations name properties outside the typed namespace without an extension namespace;
+- a multi-step selector that depends on crossing a closed style boundary (lint-level warning);
 - duplicate view IDs on one owner or an invalid view selector or footprint;
 - invalid, non-serializable, or cyclic render conditions;
 - an ordinary path that attempts to enter a view branch without endpoint-alternative syntax;
@@ -786,11 +823,15 @@ A Logical IR consumer MUST determine from the schema version and required featur
 
 Independent Go, Rust, and TypeScript implementations MUST be able to read the same Logical IR and renderer-materialized Projection IR. They MAY use different layout and routing algorithms as long as they satisfy hard constraints or report unsatisfiability with an understandable explanation.
 
-A renderer planner MUST materialize the required meta branches into renderer-neutral Projection IR without evaluating TSX components again. It MUST create the render context used by view score and conditional-adjustment expressions. A solver consumes that projection and SHOULD produce renderer-neutral Solved IR. A target painter may then produce Excalidraw, SVG, Canvas, or other output.
+A renderer planner MUST materialize the required meta branches into renderer-neutral Projection IR without evaluating TSX components again. It MUST create the render context used by view conditions, template conditionals, and conditional rules. A solver consumes that projection and SHOULD produce renderer-neutral Solved IR. A target painter may then produce Excalidraw, SVG, Canvas, or other output.
+
+Solved IR MUST carry geometry **plus provenance links**: every solved fragment identifies its line, segment, endpoint, object, label, or boundary. It MUST express geometry in local frames composed by parent transforms rather than flat world coordinates, lower to a small geometric vocabulary (paths, text runs, images), solve text measurement and wrapping itself, and linearize paint relations into a total order per rendered fragment.
+
+Painter output identity MUST derive deterministically from canonical containment addresses, not ephemeral entity keys, so re-export updates an existing target document instead of replacing it. Painterly randomness (hand-drawn jitter) MUST be seeded from canonical identity plus the build seed. A painter targeting an editable format SHOULD preserve that format's live topology — Excalidraw bindings, bound text, and frames — rather than emitting dead coordinates, and MUST document where the format cannot carry a model feature.
 
 Renderer-planner and solver interfaces MUST NOT assume a fixed page rectangle. They SHOULD accept a viewport, selected subtree, export region, tile, view-materialization policy, or level-of-detail policy so that very large models can be processed incrementally. A full-canvas projection and solve MAY remain available for deterministic exports.
 
-A render target MUST be able to request `maximum-that-fits` with an outside-in strategy. The renderer planner and solver MUST cooperate over declared view templates, renderer-created context, score expressions, conditional adjustments, target dimensions, minimum readability, routing space, and capabilities. Projection IR records every materialized view instance and its winning score; Solved IR retains that provenance and enough information to explain fallback decisions. Explicitly forced views are hard requirements; an impossible forced view MUST produce a diagnostic rather than silently substitute another view.
+A render target MUST be able to request `maximum-that-fits` with an outside-in strategy. The renderer planner and solver MUST cooperate over declared view templates, renderer-created context, view conditions, conditional adjustments, target dimensions, minimum readability, routing space, and capabilities. Projection IR records every materialized view instance and its selection explanation (which views were policy-filtered, condition-failed, footprint-failed, or solver-rejected); Solved IR retains that provenance and enough information to explain fallback decisions. Explicitly forced views are hard requirements; an impossible forced view MUST produce a diagnostic rather than silently substitute another view.
 
 Projection IR MUST be versioned and serializable for debugging, caching, cross-language solvers, and deterministic tests. It MUST distinguish stable logical entity keys, view-template entity keys, and target-local render-instance keys.
 
@@ -812,7 +853,7 @@ The initial fixtures are:
 | Fixture | Primary coverage |
 | --- | --- |
 | [`vegvisir-voice-agents`](examples/vegvisir-voice-agents/) | nested scopes, image content, ellipse and diamond shapes, a waypoint element inside a corridor, two-headed lines, a labeled segment pinned into the gap between containers, and a merged fan-out in a padding band |
-| [`modelplane-fleet-inference`](examples/modelplane-fleet-inference/) | anchored page furniture, repeated cluster components with hidden renderer-scored view templates, stable ports mapped by `PortPlacement`, a context-conditional detail and path, an implicitly created and post-hoc refined port, an entity-only endpoint with a line-owned dock, two ordered corridors subdividing one gap, external nodes, and a footer |
+| [`modelplane-fleet-inference`](examples/modelplane-fleet-inference/) | anchored page furniture, repeated cluster components with hidden condition-selected view templates, stable ports mapped by `PortPlacement`, a context-conditional detail and path, an implicitly created and post-hoc refined port, an entity-only endpoint with a line-owned dock, two ordered corridors subdividing one gap, external nodes, and a footer |
 | [`agent-substrate`](examples/agent-substrate/) | deep containment, lines pinned through padding bands and sibling gaps, dashed control paths, a boundary-spanning request route arriving deep inside nested scopes, and corner-anchored annotations |
 | [`machine-thought-os`](examples/machine-thought-os/) | a labeled divider on a gap, many-cardinality ports, fan-out and fan-in share groups, a dashed branch leaving a solid merged trunk, bundled data feeds, deferred work, and a hierarchy-crossing return path |
 
@@ -868,9 +909,9 @@ The first grammar and IR version MUST cover at least these golden scenarios:
 35. One component offers compact and internal meta branches while its canonical identity, external ports, and attached lines remain unchanged across materialization.
 36. An A4 `maximum-that-fits` renderer instantiates a less demanding viable branch than an A0 renderer when necessary, and both projections are deterministic.
 37. Outside-in materialization recursively instantiates nested components until the next view would violate footprint, readability, routing, or hard layout constraints.
-38. A forced view that cannot fit produces a diagnostic; an automatic policy instead instantiates its declared or computed fallback.
+38. A forced view that cannot fit produces a diagnostic; an automatic policy instead instantiates the next viable view in declaration order.
 39. View templates and their descendants are invisible to ordinary path resolution; descendants of an unselected template do not appear in Projection IR, while selecting it creates distinct render-instance keys with stable template provenance.
-40. The same Logical IR materializes different print, screen, narrow, and wide projections because renderer-created contexts produce different explainable view scores, without re-running TSX.
+40. The same Logical IR materializes different print, screen, narrow, and wide projections because renderer-created contexts make different views the first viable one, with an explainable selection trace and without re-running TSX.
 41. A conditional line or segment appears only when its condition holds, and a required connection removed by the condition produces a diagnostic.
 42. Cyclic or non-converging size-dependent view fallback is detected and diagnosed deterministically.
 43. A deep ordinary endpoint truncates to its deepest instantiated object when the selected rendering hides its suffix; an `alt()` endpoint selects `abc` for view `view`, otherwise selects the default `foo/bar`, and still truncates if the chosen suffix is only partly instantiated.
@@ -885,6 +926,18 @@ The first grammar and IR version MUST cover at least these golden scenarios:
 52. An element under an `extent` constraint spans exactly from its first anchor to its second along the stated axis.
 53. Two diagrams depicting the same subject reference serialize and read back with that shared `SubjectRef` intact, without any core interpretation.
 54. Inside a `strictPorts` container, an endpoint naming an undeclared port produces a diagnostic; outside, an implicitly created single-attachment port with a near-duplicate name produces a warning.
+55. A `Scope` with a shape and a `Node` owning nested entities normalize to the same object kind; `Node`/`Scope` defaults differ only in shape, boundary, and content handling.
+56. Lines, corridors, constraints, rules, and anchored objects declared among layout children never appear in the layout member set; removing an object's anchor restores its membership.
+57. `<Text>` inside an object becomes content; the same `<Text>` in member position becomes a text object; a `label` prop becomes a content entry with role `label`.
+58. `padding(self, "left")` inside a component resolves to that component's own root container without naming it from the parent side.
+59. A frame object with an `inside` constraint sizes itself around members contained elsewhere and paints behind them.
+60. A theme rule styles every object with a matching role across component boundaries; a multi-step structural selector stops at a closed style boundary; an inline `style` prop overrides both.
+61. A conditional rule applies exactly while its render-context condition holds, and metric declarations from rules resolve before layout and routing.
+62. `below` and `between` constraint sugar normalize to spatial `order` relations that solve identically to the explicit form.
+63. Every solved fragment traces back to its line, segment, object, label, or boundary; no anonymous geometry reaches a painter.
+64. Re-exporting a locally edited model into an existing Excalidraw document updates the affected elements by canonical-address identity; unrelated elements, their IDs, and their hand-drawn seeds stay byte-identical.
+65. An Excalidraw export keeps arrows bound to their target elements and labels bound as text, so moving a box in the editor keeps its connections attached.
+66. An SVG export contains one group per object with roles and classes as `class` attributes and canonical addresses as stable IDs.
 
 ## 19. Open grammar decisions
 
@@ -894,7 +947,7 @@ The following details must be decided next by comparing the concrete TSX fixture
 - naming conventions for port-handle props on components;
 - the exact rules for `optional` and `many` cardinality and attachment completeness;
 - strings versus typed `ref()` objects for references and regions;
-- whether a container can reference itself through an explicit `self` alias (for `padding(self, side)` from inside);
+- the exact typed form of the `self` alias beyond region references;
 - text as child, `label` property, or structured content;
 - exact core shape set;
 - mirroring (flips) in addition to 90° orientation steps;
@@ -912,13 +965,17 @@ The following details must be decided next by comparing the concrete TSX fixture
 - how corridors subdividing one gap are ordered and addressed;
 - whether a share group can carry its trunk pinning once instead of per line;
 - grouping lines into higher-level semantic flows (line sets) as a library concept;
+- template instancing for very large models — whether repeated identical component projections can share one solved template, the SVG `symbol`/`use` analog — instead of full expansion everywhere;
+- whether automatic dock positions in Solved IR use a continuous perimeter parametrization (the Excalidraw `focus`/`gap` model) or side-plus-offset;
 - representation of resolved references and regions in canonical JSON and YAML;
 - which core shorthand forms normalization accepts;
 - the children-as-data protocol that lets library containers such as an interaction interpret typed child declarations before expansion;
 - which provenance data the JSX runtime must capture;
 - how reference fixtures express relative placement without turning preferences into accidental hard order;
-- the standardized condition-context vocabulary and utility function for automatic component-view choice;
-- score ranges, tie-breaking, context inheritance, and score-explanation serialization;
+- the standardized condition-context vocabulary for automatic component-view choice;
+- context inheritance rules and the serialization of view-selection explanations;
+- the string selector form, a possible standalone stylesheet file format, and the exact inheritable-property list;
+- how component roots are marked as style boundaries during expansion and how a component opts out;
 - how view-local port placement maps onto a component's canonical semantic ports;
 - the exact `alt()` helper shape and whether the string sugar `api.{foo#view:abc, foo:bar}` ships at all;
 - the exact TSX helpers or object syntax for `Condition`, `When`, `Switch`, and conditional paths;

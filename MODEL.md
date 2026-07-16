@@ -8,41 +8,43 @@ This document defines the conceptual data model and the Logical IR. [REQUIREMENT
 
 1. **Normalized graph.** After TSX evaluation and component expansion, a diagram is a flat, renderer-neutral entity graph. No functions, no renderer objects, no pixel coordinates.
 2. **Four independent relations.** Containment (a tree), layout (membership plus constraints), routing (regions and lines), and paint order are separate relations over the same entities.
-3. **Orientation is local.** Every scope has a local frame. All directional vocabulary — sides, axes, row/column — is expressed in the local frame. Rotating a scope re-orients its entire subtree without touching any child declaration.
-4. **Whitespace is the routing plane.** Corridors are not free-floating entities. They are the gaps and padding bands that layout produces anyway — implicit, addressable, and space-reserving, like margin and padding in CSS. A `Corridor` declaration refines such a region; it never invents one detached from the structure.
-5. **Lines are symmetric and segmented.** A line has two interchangeable ends. It consists of an ordered list of segments; most are implicit and inferred, some are explicitly pinned to a region or waypoint and can carry labels there.
-6. **Named ports create joins.** Every port is identified by its owner and local ID. All line ends at that canonical port form one topological join; the port's sharing policy determines whether their adjacent paths merge, bundle, separate, or remain router-selected.
-7. **Entity-only endpoints own their docks.** A line end that names no port receives a distinct dock identity derived from that line and end. Coincident automatic docks do not imply a join.
-8. **Containers are addressable.** Every author-declared structural container has a local ID and contributes one segment to its canonical containment path. Reusable components therefore create nested namespaces without requiring global IDs.
-9. **Views are renderer-instantiated meta branches.** View templates are invisible to ordinary paths. A renderer creates context, scores the alternatives, and materializes one branch without changing the component's semantic identity or canonical ports.
-10. **Drawings depict subjects.** Any entity may carry an opaque reference to a semantic subject defined outside the diagram. The core records and round-trips that reference; interpreting it — identity, consistency across diagrams, metamodel validation — belongs to libraries and tooling.
+3. **One object primitive.** Containers and shapes are the same kind of entity: an object with optional shape, content, label, ports, children, and orientation. `Node` and `Scope` are authoring shorthands with different defaults, not different primitives.
+4. **Orientation is local.** Every container has a local frame. All directional vocabulary — sides, axes, row/column — is expressed in the local frame. Rotating a container re-orients its entire subtree without touching any child declaration.
+5. **Whitespace is the routing plane.** Corridors are not free-floating entities. They are the gaps and padding bands that layout produces anyway — implicit, addressable, and space-reserving, like margin and padding in CSS. A `Corridor` declaration refines such a region; it never invents one detached from the structure.
+6. **Lines are symmetric and segmented.** A line has two interchangeable ends. It consists of an ordered list of segments; most are implicit and inferred, some are explicitly pinned to a region or waypoint and can carry labels there.
+7. **Named ports create joins.** Every port is identified by its owner and local ID. All line ends at that canonical port form one topological join; the port's sharing policy determines whether their adjacent paths merge, bundle, separate, or remain router-selected.
+8. **Entity-only endpoints own their docks.** A line end that names no port receives a distinct dock identity derived from that line and end. Coincident automatic docks do not imply a join.
+9. **Containers are addressable.** Every author-declared structural container has a local ID and contributes one segment to its canonical containment path. Reusable components therefore create nested namespaces without requiring global IDs.
+10. **Presentation is rules.** Structure carries roles and classes; presentation and metric defaults come from typed rules in a layered cascade, CSS-style. Rules never change topology, identity, membership, or routing. Inline styles remain the innermost cascade layer.
+11. **Views are ordered alternatives.** View templates are invisible to ordinary paths. A renderer evaluates their conditions against a bounded context — media-query-style — and materializes the first viable view in declaration order, without changing the component's semantic identity or canonical ports.
+12. **Drawings depict subjects.** Any entity may carry an opaque reference to a semantic subject defined outside the diagram. The core records and round-trips that reference; interpreting it — identity, consistency across diagrams, metamodel validation — belongs to libraries and tooling.
 
 ## 2. Frames and orientation
 
-Every scope owns a **local frame**: from the author's point of view inside the scope, x runs right and y runs down. All directions written inside a scope are interpreted in this frame:
+Every container owns a **local frame**: from the author's point of view inside the container, x runs right and y runs down. All directions written inside are interpreted in this frame:
 
 - sides: `top`, `right`, `bottom`, `left`;
 - axes: `horizontal`, `vertical`;
 - layout strategies: `row` flows along local x, `column` along local y;
-- note placements, corridor axes, and endpoint side hints.
+- anchor placements, corridor axes, and endpoint side hints.
 
-A scope declares its orientation relative to its parent frame:
+A container declares its orientation relative to its parent frame:
 
 ```ts
 type Orientation = 0 | 90 | 180 | 270; // clockwise, default 0
 ```
 
-The physical direction of anything is the composition of all ancestor orientations. Setting `orientation={90}` on one scope therefore rotates its complete subtree — layouts, ports, corridors, line routes — while every declaration inside stays untouched. Components authored for a horizontal flow can be embedded rotated in a vertical context.
+The physical direction of anything is the composition of all ancestor orientations. Setting `orientation={90}` on one container therefore rotates its complete subtree — layouts, ports, corridors, line routes — while every declaration inside stays untouched. Components authored for a horizontal flow can be embedded rotated in a vertical context.
 
 Rules:
 
-- Orientation is author-set. The solver does not rotate scopes on its own. An `auto` orientation may be added later as an explicit opt-in.
+- Orientation is author-set. The solver does not rotate containers on its own. An `auto` orientation may be added later as an explicit opt-in.
 - Text content stays physically upright by default. `textOrientation: "upright" | "frame"` controls whether text rotates with the frame. Intrinsic size measurement happens in the resolved physical orientation.
 - Mirroring (flips) is not part of the first model version and is listed as an open decision.
 
 ## 3. Containment, containers, and identity
 
-A `Scope` owns a semantic boundary and local frame and is by default also a containment region. Every ordinary structural container — including `Diagram`, `Scope`, explicit layout containers, `PortGroup`, and elements that own diagram entities — has a required local ID. IDs are unique among direct siblings, never globally. Every ordinary container contributes a segment to the canonical containment path; layout containers are therefore addressable even though their purpose remains layout rather than semantic scoping.
+Every ordinary structural container — including the diagram root, every `Scope`, explicit layout containers, `PortGroup`, and objects that own diagram entities — has a required local ID. IDs are unique among direct siblings, never globally. Every ordinary container contributes a segment to the canonical containment path; layout containers are therefore addressable even though their purpose remains layout rather than semantic grouping.
 
 `View`, `When`, and `Switch` also require IDs, but they belong to a separate meta tree. Neither a meta container nor any unmaterialized template descendant appears in ordinary path lookup.
 
@@ -54,35 +56,60 @@ platform/production/control-plane/api.request
 
 The address remains stable across component-view selection. `production/internals/layout` cannot accidentally reach a view named `internals`; normal lookup never enters that meta branch. A reusable component may contain the same relative path in every instance because its root container ID creates the instance namespace.
 
+A component may refer to its own root region with the `self` alias — `padding(self, "left")` — instead of climbing out and naming itself from the parent side, which would couple the component to its externally assigned position.
+
 Every entity has exactly one containment parent. Layout, routing, and paint relations may reference any entities regardless of containment.
 
-Port-group JSX children are membership shorthand rather than containment. Ports remain directly owned by their element or scope, so placing `tasks` inside `<PortGroup id="loop">` does not change the endpoint from `voice-agent.tasks` to `voice-agent/loop/tasks`. The group itself remains an addressable relation entity.
+Port-group JSX children are membership shorthand rather than containment. Ports remain directly owned by their object, so placing `tasks` inside `<PortGroup id="loop">` does not change the endpoint from `voice-agent.tasks` to `voice-agent/loop/tasks`. The group itself remains an addressable relation entity.
 
-Scopes are full endpoints: they can carry ports, be targets of lines, and be anchors for notes.
+Objects with children are full endpoints: they can carry ports, be targets of lines, and anchor annotations.
 
 ### 3.1 Semantic subjects
 
 An entity may declare a **subject**: a namespaced, opaque reference to a semantic entity defined outside the diagram (`{ namespace: "uml", id: "sales/Order" }`). Several depictions — a class in a class diagram, a lifeline classifier in an interaction, an artifact in a deployment — can reference the same subject from different documents. The normalizer stores and serializes the reference without interpreting it. Cross-diagram identity management, subject catalogs, and metamodel validation are library and tooling concerns; TSX makes the authoring side nearly free because a subject is just a module-level TypeScript value that several diagram files import.
 
-## 4. Elements, content, and sizing
+## 4. Objects, content, and sizing
 
-An `Element` (`Node` in the authoring surface) is a visible or intrinsically measurable object: a shape primitive with structured content (text runs, icons, images), ports, and a size policy. Sizing is intrinsic by default — derived from content, padding, and minimum/maximum bounds. Fixed sizes are geometric constraints, not positions.
+There is one **object** primitive. An object may have, in any combination:
 
-Content composes into **groups**: an ordered content run may contain nested groups with a role (`attributes`, `operations`, ...). Groups are the model for compartments — a theme derives dividers and spacing between adjacent groups from their roles, so notation like UML class compartments needs no empty divider pseudo-content. The authoring surface exposes groups as `<Compartment role="...">` children of an element.
+- a shape primitive (rectangle, ellipse, diamond, text, image, or a namespaced extension shape);
+- structured content: text runs, icons, images, and role-tagged content groups;
+- a label: boundary caption text, normalized as a content entry with role `label`;
+- ports;
+- contained children and a layout for them;
+- a local orientation;
+- an anchor relation instead of layout membership (section 10);
+- size policy, margin, and padding.
+
+`Node` and `Scope` are authoring shorthands over this primitive: `Node` defaults to a visible shape with content and no children; `Scope` defaults to a container with children, an optional boundary, and a label. Neither introduces a second entity kind. A `Scope` with a shape (`uml:package`, `rounded-rectangle`) and a `Node` that owns nested entities are both ordinary objects.
+
+Sizing is intrinsic by default — derived from content, children, padding, and minimum/maximum bounds. Fixed sizes are geometric constraints, not positions.
+
+**Content groups.** An ordered content run may contain nested groups with a role (`attributes`, `operations`, ...). Groups are the model for compartments — a theme derives dividers and spacing between adjacent groups from their roles, so notation like UML class compartments needs no empty divider pseudo-content. The authoring surface exposes groups as `<Compartment role="...">` children.
+
+**Text is context-dependent sugar.** `<Text>` inside an object normalizes to a content entry of that object. `<Text>` written where a placeable object is expected — as a layout child — normalizes to an object with a text shape. A `label` prop on an object normalizes to a content entry with role `label`. All three are the same underlying content model.
 
 ## 5. Layout
 
-A layout arranges an explicit member set inside a container. JSX children are shorthand for that set. Strategies compose recursively: `row`, `column`, `stack`, `overlay`, `grid`, `tree`, `radial`, `layered`, `constraint`.
+A layout arranges an explicit member set inside a container. Strategies compose recursively: `row`, `column`, `stack`, `overlay`, `grid`, `tree`, `radial`, `layered`, `constraint`.
 
-**Ordering.** The default ordering policy is `prefer-source`: source order is a soft preference the solver may override only when it clearly reduces crossings, route length, or space. `free` releases the order entirely; `fixed` makes source order a hard constraint. This replaces the earlier `auto` default — the fixtures showed that authors reach for source order almost everywhere, so it should be the cheap default rather than an annotation on every layout.
+**Membership.** JSX children are shorthand for the member set, with a fixed carve-out: only placeable objects become members. Lines, segments, ports, port groups, corridors, constraints, rules, and anchored objects are declared among the same children but never join the member set. An object with an `anchor` leaves the member set; removing the anchor puts it back.
+
+**Ordering.** The default ordering policy is `prefer-source`: source order is a soft preference the solver may override only when it clearly reduces crossings, route length, or space. `free` releases the order entirely; `fixed` makes source order a hard constraint.
+
+**Alignment and distribution.** A layout may align members on its cross axis (`start`, `center`, `end`, `stretch`) and distribute them on its main axis (`start`, `center`, `end`, `space-between`, `space-around`). These are layout parameters in the IR, not styles; their default values may come from rules like other metrics.
 
 ### 5.1 Component views
 
-A component view is a named meta branch owned by a component scope. Its descendants are template declarations, not active diagram entities. The branch and its template-local IDs are available to normalization, validation, scoring, and explicit meta-reference validation, but ordinary path resolution cannot see them.
+A component view is a named meta branch owned by a component container. Its descendants are template declarations, not active diagram entities. The branch and its template-local IDs are available to normalization, validation, and explicit meta-reference validation, but ordinary path resolution cannot see them.
 
-The renderer creates an immutable context for each component instance. It contains target properties, current outside-in allocation, inherited purpose and audience, semantic state, and renderer capabilities. Each view evaluates a serializable score expression against that context. The highest-scoring viable view wins; its template is materialized into Projection IR. Conditions inside the winning branch then adapt its instantiated structure and paths using the same context.
+**Selection is media-query-like, first fit wins.** The views of one owner form an ordered list — declaration order is preference order, consistent with the language's source-order principle. The renderer creates an immutable context for each component instance (target medium, page or viewport class, outside-in allocation, purpose, semantic state, capabilities). It then walks the owner's views in order and materializes the **first** view whose `requires` condition holds, whose footprint fits the allocation, and which the render policy permits (a forced view or a detail bound filters the list first). There is no score arithmetic and no tie-breaking: order decides.
 
-Footprint, readability, routing space, and hard constraints can invalidate a tentative winner and cause deterministic fallback or rescoring. Logical IR retains all templates and score expressions. Projection IR records concrete render instances and the winning score explanation; Solved IR retains their provenance.
+If layout or routing later shows that a tentatively selected view cannot be solved, the renderer discards it and continues with the next view in order. Selection is deterministic for identical model, target, policy, and solver version. A forced view that is not viable is a diagnostic, never a silent substitution.
+
+Conditions inside the winning branch (`when` on template entities, `When`/`Switch` meta containers) adapt the instantiated structure using the same context. The condition model is shared with styling rules (section 12): one `ConditionIR`, three consumers — view selection, template conditionals, and conditional rules.
+
+Footprint, readability, routing space, and hard constraints can invalidate a tentative winner and cause deterministic fallback to the next view. Logical IR retains all templates and conditions. Projection IR records concrete render instances and the selection explanation; Solved IR retains their provenance.
 
 The owner and its ports exist independently of every view. `PortPlacement` maps a stable port onto a template anchor without cloning its semantic identity. External connections normally target those stable ports.
 
@@ -104,7 +131,7 @@ If the renderer instantiated `foo` with the view named `view`, the selected case
 
 This is the CSS box model analogy at the core of routing:
 
-- Every element and scope has a **margin** (whitespace demanded outside its border) and every container a **padding** (whitespace between its border and its content).
+- Every object has a **margin** (whitespace demanded outside its border) and every container a **padding** (whitespace between its border and its content).
 - The whitespace between two layout siblings — merged margins plus the layout gap — is a **gap region**.
 - The whitespace between a container's border and its content on one side is a **padding band**.
 
@@ -113,8 +140,9 @@ Gap regions and padding bands are the diagram's **corridors**. They exist implic
 Regions are addressed structurally:
 
 ```ts
-gap(a, b)              // whitespace between two layout siblings
+gap(a, b)                // whitespace between two layout siblings
 padding(container, side) // whitespace band inside a container edge (local side)
+padding(self, side)      // the same, for the declaring component's own root
 ```
 
 A `Corridor` declaration refines an implicit region:
@@ -126,16 +154,16 @@ A `Corridor` declaration refines an implicit region:
 
 **Pressure** is an optimization weight penalizing occupied cross-sectional width: high pressure packs tracks toward minimum spacing and makes permitted bundles and merges more attractive. It never overrides hard minimum spacing or sharing prohibitions.
 
-Elements may sit inside a corridor (a decision diamond in the middle of a vertical run). Track order within a corridor is constrainable, including relative to such resident elements.
+Objects may sit inside a corridor (a decision diamond in the middle of a vertical run). Track order within a corridor is constrainable, including relative to such resident objects.
 
 ## 7. Ports and port groups
 
-A **port** is a named attachment point on an element or scope. Ports are symmetric: they have no input/output direction — direction belongs to lines. A port declares:
+A **port** is a named attachment point on an object. Ports are symmetric: they have no input/output direction — direction belongs to lines. A port declares:
 
 - a preferred or required side and position in the local frame;
 - cardinality (`one`, `optional`, `many`; geometric ports default to `many`);
 - capacity and minimum spacing for attached lines;
-- optionally a content type tag for compatibility checking.
+- optionally a content type tag for compatibility checking;
 - an optional visible marker;
 - a sharing policy for the lines joined there.
 
@@ -145,7 +173,7 @@ Implicit creation absorbs typos: `api.reqest` silently becomes a second port and
 
 Every line end has a dock identity. An endpoint naming only `api` receives a line-owned dock whose identity is derived from `(line key, end index)` and whose position is chosen by the router. It does not synthesize the stable named port `request` or any other author-visible ID. Two lines targeting `api` without a port own distinct docks and do not join even if solving places those docks at the same coordinate.
 
-A dock carries a base presentation style. Its line contributes an overlay to the rendered dock: non-conflicting properties from both are retained, and the line wins property conflicts. Named-port docks and line-owned docks use the same cascade. Dock-only properties such as marker shape or fill therefore compose with line properties such as stroke or width.
+A dock carries a base presentation style. Its line contributes an overlay to the rendered dock: non-conflicting properties from both are retained, and the line wins property conflicts. Named-port docks and line-owned docks use the same cascade. Dock-only properties such as marker shape or fill therefore compose with line properties such as stroke or width. Dock styles participate in the general rule cascade of section 12 like every other presentation property.
 
 **Component boundaries.** Components are ordinary TSX functions. To let callers attach lines without knowing internals, the runtime provides opaque port handles:
 
@@ -166,8 +194,8 @@ A handle is created by the caller, passed as a prop, and bound exactly once insi
 
 A **line** is the semantic connection unit.
 
-- **Two symmetric ends.** `from` and `to` are positional labels for `ends[0]` and `ends[1]`, nothing more. Arrowheads are properties: `heads = "forward" | "backward" | "both" | "none"` (default `forward`, meaning a head at `to`), with per-end head shapes available in style.
-- **Endpoints** reference a port, an element, or a scope. A named port supplies the dock identity. Without a port, the endpoint owns a distinct automatic dock and the router selects its position; an optional local `side` hint constrains it.
+- **Two symmetric ends.** `from` and `to` are positional labels for `ends[0]` and `ends[1]`, nothing more. Arrowheads are properties: `heads = "forward" | "backward" | "both" | "none"` (default `forward`, meaning a head at `to`), with per-end head shapes available through structured ends.
+- **Endpoints** reference a port or an object. A named port supplies the dock identity. Without a port, the endpoint owns a distinct automatic dock and the router selects its position; an optional local `side` hint constrains it.
 - **A line is an ordered list of segments** from end to end. Segments are:
   - `implicit` — inferred by the normalizer: hierarchy climbs and descents toward the least common ancestor, and connective runs through implicit corridors. Authors never enumerate crossed boundaries.
   - `explicit` — authored pins. An explicit segment either passes `through` a region (a named corridor, `gap(...)`, or `padding(...)`) or `via` a waypoint entity. Explicit segments are where labels live: "this line goes out into the whitespace between the boxes, and the label sits there."
@@ -205,40 +233,82 @@ Within a share group:
 
 Explicit segments of grouped lines that pin the same region are merged into one shared trunk in that region.
 
-## 10. Notes and anchors
+## 10. Anchoring and frames
 
-A `Note` is annotation content placed by an **anchor relation** instead of layout membership: `anchor` names an entity or region (default: the declaring parent), `placement` positions the note relative to it (`above`, `below`, `left`, `right`, `inside-top-left`, `inside-bottom`, `inside-bottom-right`, ..., in the anchor's local frame). A note without an anchor participates in normal layout like an element. Page furniture — titles, legends, footers — are library components built on the same mechanism.
+**Anchoring** is a capability of every object, not a separate entity kind. An object with an `anchor` names an entity or region and a structured placement relative to it, in the anchor's local frame:
+
+```ts
+interface PlacementSpec {
+  area: "inside" | "outside";
+  side?: Side | "auto";                 // outside: which side; inside: which edge
+  align?: "start" | "center" | "end";   // along that side
+}
+```
+
+An anchored object leaves layout membership; an object without an anchor participates in layout like any other. Annotations, titles, legends, and footers are library components (`Note`, `Title`, `Legend`, ...) built on this capability plus roles for the theme.
+
+**Frames.** A container may visually enclose objects it does not contain: a boundary object plus an `inside` constraint listing the members. The container's size then derives from the constrained members plus padding, and the container paints behind them by default. This is the model for UML combined fragments and similar overlays — the members' containment, layout, and addresses stay where they are; only the drawn boundary spans them.
 
 ## 11. Constraints and paint order
 
-Constraints are typed, serializable, and carry a strength (`required` or a weighted preference). Families include ordering (`before`/`after`, also for ports, corridor tracks, and corridors within a region), `adjacent`, `align`, `same-size`, `near`, `inside`, `below`/`between` conveniences, `avoid-overlap`, and routing prohibitions. Partial orders are preferred; unmentioned entities stay unconstrained; hard cycles are diagnostics.
+Constraints are typed, serializable, and carry a strength (`required` or a weighted preference). Partial orders are preferred; unmentioned entities stay unconstrained; hard cycles are diagnostics.
 
-An `extent` constraint stretches one element along an axis between two anchor entities: the element's extent spans from the position of the first anchor to the position of the second. This is the model for activation bars on a lifeline, fork/join bars spanning their flows, brackets, and similar span-shaped visuals — they stay honest elements instead of abusing thick overlay lines. The exact edge-versus-center anchor semantics remain to be refined.
+The core families:
+
+- **order** — one relation with three bases: position within a layout, spatial order along a local axis, or track order within a corridor region. The authoring conveniences `below`, `above`, `between`, and port or corridor ordering all normalize to it.
+- **adjacent**, **align**, **same-size**, **near**, **avoid-overlap** — as in common constraint layout systems.
+- **inside** — members lie within a container's bounds (with padding); also the basis of frames (section 10).
+- **extent** — stretches one object along an axis between two anchor entities: activation bars, fork/join bars, brackets. The exact edge-versus-center anchor semantics remain to be refined.
 
 Paint order is an independent relation of `before`/`after` pairs.
 
-## 12. Logical IR
+## 12. Styling: rules, cascade, and conditions
 
-### 12.1 Invariants
+Structure carries `roles` and `classes`; presentation comes from **rules**. A rule is typed data: a selector, an optional condition, and a set of declarations. Rules live in a fixed layered cascade:
+
+```text
+renderer default  <  theme  <  library  <  document  <  inline style prop
+```
+
+Within one layer, later rules win; across layers, the higher layer wins. There is no CSS specificity arithmetic — layers replace it. The dock cascade of section 7 (line overlays dock) is the same mechanism at the innermost level.
+
+**Selectors** match on entity kind, shape, roles, classes, and IDs, combined with descendant and child combinators. Two deliberate exclusions:
+
+- no structural pseudo-classes (`nth-child`, sibling combinators): the solver may reorder layout members, so selectors depending on source or solved order would be unstable;
+- multi-step structural selectors do not cross **style boundaries**. A component's root container is a style boundary by default (the runtime marks it during expansion; a component may opt out). Roles and classes are the public styling API that themes match across boundaries — the `::part` lesson from the web, adopted as the default instead of the exception.
+
+**Conditions** on rules are the same `ConditionIR` used by view selection and `When`/`Switch`: comparisons over the bounded renderer context (medium, page class, allocated inline/block size, purpose, state, capabilities). A conditional rule is a media query or container query; conditions read the outside-in allocation, never solved geometry, so no styling/layout cycle exists.
+
+**What rules may set.** Presentation properties (fill, stroke, stroke width, dash, opacity, roughness, fonts, text orientation, dock markers) and metric defaults (margin, padding, gap, minimum sizes, spacing). Metric properties resolve before layout and routing, like every size-affecting input.
+
+**What rules may never do.** Change topology, identity, membership, ports, sharing, routing, layout strategy, or entity existence. There is no `display: none` analog — structural alternatives belong to views and `When`. Corridor pressure and port sharing policies are semantics, not styles.
+
+**Inheritance.** Inheritable properties (fonts, stroke color, roughness, text orientation) flow down containment unless overridden; box and metric properties do not inherit.
+
+The authoring surface uses typed helpers (`rule(...)`, `role(...)`, `cls(...)`, `within(...)`) or an equivalent string selector form; both normalize to the same `SelectorIR`. Whether a standalone stylesheet file format ships is an open decision — the IR contract is the typed rule, not a text syntax.
+
+## 13. Logical IR
+
+### 13.1 Invariants
 
 - Every entity has a compiler-internal `EntityKey`: deterministic for identical input, unique per document, not authored, not stable across arbitrary edits.
+- The **canonical containment address** is the identity that survives edits and builds. Exports, provenance, and painter output IDs derive from it, not from `EntityKey`, so regenerating a diagram can update an existing output document instead of replacing it.
 - Author IDs remain containment-local bindings; every structural container has one, and the normalizer resolves hierarchical paths to keys.
 - A port's canonical identity is its resolved owner plus local port ID, regardless of whether it was implicit, explicitly declared, configured post-hoc, or reached through a handle.
 - Every entity-only endpoint has a line-owned dock identity derived deterministically from its line key and end index. Such a dock is not an entity in the ordinary address space and never creates an implicit join.
 - Port handles are resolved before emission; provenance may record the component property and port involved.
 - View templates remain present in the meta domain of Logical IR and are invisible to ordinary references. Renderer materialization creates separate instance keys in Projection IR.
+- Rules are entities of their declaring layer and never alter the entity graph they style.
 - No functions, symbols, cycles, renderer objects, or absolute positions.
 
-### 12.2 Document and entities
+### 13.2 Document and entities
 
 ```ts
 type EntityKey = number;
 type LocalId = string;
 
 type EntityKind =
-  | "diagram"
-  | "scope"
-  | "element"
+  | "object"
   | "layout"
   | "view"
   | "conditional"
@@ -248,13 +318,13 @@ type EntityKind =
   | "corridor"
   | "line"
   | "segment"
-  | "note"
+  | "rule"
   | "constraint";
 
 interface LogicalIR {
   schema: "excalmermaid.logical";
   version: string;
-  root: EntityKey;
+  root: EntityKey; // the diagram root object
   entities: readonly EntityIR[];
   paint: readonly PaintRelationIR[];
   extensions?: Readonly<Record<string, unknown>>;
@@ -279,9 +349,7 @@ interface EntityBase<Kind extends EntityKind> {
 }
 
 type EntityIR =
-  | DiagramIR
-  | ScopeIR
-  | ElementIR
+  | ObjectIR
   | LayoutIR
   | ViewIR
   | ConditionalIR
@@ -291,16 +359,16 @@ type EntityIR =
   | PortGroupIR
   | LineIR
   | SegmentIR
-  | NoteIR
+  | RuleIR
   | ConstraintIR;
 ```
 
 For `domain: "ordinary"`, `parent` is both containment and the parent used to construct author addresses. Ordinary lookup ignores every `domain: "meta"` entity. Meta parents instead form a hidden template tree rooted at a `ViewIR` or conditional meta container. `ownerScope` identifies the nearest local frame and does not participate in name resolution. `id` may be `null` only for compiler-generated or explicitly non-addressable leaf entities; it is required for every author-declared ordinary or meta container.
 
-### 12.3 Directions, lengths, and regions
+### 13.3 Directions, lengths, and regions
 
 ```ts
-type Side = "top" | "right" | "bottom" | "left"; // always local to the owning scope's frame
+type Side = "top" | "right" | "bottom" | "left"; // always local to the owning frame
 type Axis = "horizontal" | "vertical";           // always local
 type Orientation = 0 | 90 | 180 | 270;
 
@@ -315,43 +383,37 @@ interface BoxLengths {
 
 type RegionRef =
   | { kind: "gap"; between: readonly [EntityKey, EntityKey] }
-  | { kind: "padding"; container: EntityKey; side: Side }
+  | { kind: "padding"; container: EntityKey; side: Side } // `self` resolves here
   | { kind: "corridor"; corridor: EntityKey };
 ```
 
-### 12.4 Diagram, scopes, and elements
+### 13.4 Objects
+
+One entity kind covers the diagram root, containers, and shapes. `Node` and `Scope` are authoring sugar over it.
 
 ```ts
-interface DiagramIR extends EntityBase<"diagram"> {
-  id: LocalId;
-  children: readonly EntityKey[];
-  views: readonly EntityKey[];
-}
-
-interface ScopeIR extends EntityBase<"scope"> {
+interface ObjectIR extends EntityBase<"object"> {
   id: LocalId;
   orientation: Orientation;
-  boundary: "visible" | "invisible";
+  primitive?: PrimitiveSpec;   // absent: pure container, boundary from style
+  content: readonly ContentSpec[]; // label normalizes to a role: "label" entry
   children: readonly EntityKey[];
   ports: readonly EntityKey[];
   views: readonly EntityKey[];
   defaultLayout?: EntityKey;
+  size: SizePolicy;
   padding?: BoxLengths;
   margin?: BoxLengths;
-  style?: StyleSpec;
+  anchor?: EntityKey | RegionRef; // present: anchored, not a layout member
+  placement?: PlacementSpec;
+  styleBoundary?: boolean;        // component roots default to true
+  style?: StyleProperties;        // inline cascade layer
 }
 
-interface ElementIR extends EntityBase<"element"> {
-  id: LocalId;
-  primitive: PrimitiveSpec;
-  content: readonly ContentSpec[];
-  children: readonly EntityKey[];
-  ports: readonly EntityKey[];
-  views: readonly EntityKey[];
-  size: SizePolicy;
-  margin?: BoxLengths;
-  padding?: BoxLengths;
-  style?: StyleSpec;
+interface PlacementSpec {
+  area: "inside" | "outside";
+  side?: Side | "auto";
+  align?: "start" | "center" | "end";
 }
 
 type PrimitiveSpec =
@@ -390,15 +452,17 @@ type SizeValue =
   | { kind: "fill"; weight?: number };
 ```
 
-### 12.5 Layout
+### 13.5 Layout
 
 ```ts
 interface LayoutIR extends EntityBase<"layout"> {
   id: LocalId;
   container: EntityKey;
-  members: readonly EntityKey[];
+  members: readonly EntityKey[]; // placeable objects only
   strategy: LayoutStrategy;
   order: OrderingPolicy;
+  align?: "start" | "center" | "end" | "stretch";                       // cross axis
+  distribute?: "start" | "center" | "end" | "space-between" | "space-around"; // main axis
   gap?: Length;
 }
 
@@ -422,19 +486,17 @@ type OrderingPolicy =
   | { kind: "constraints"; constraints: readonly EntityKey[] };
 ```
 
-### 12.5.1 Component views
+### 13.5.1 Component views
 
 ```ts
 interface ViewIR extends EntityBase<"view"> {
   id: LocalId;
   domain: "meta";
-  owner: EntityKey; // ordinary diagram, scope, or element whose identity this view preserves
-  detail?: number;
-  score: ScoreIR;
+  owner: EntityKey; // ordinary object whose identity this view preserves
+  detail?: number;  // policy filter, not a score
   requires?: ConditionIR;
-  templateChildren: readonly EntityKey[];
   footprint?: ViewFootprint;
-  fallback?: EntityKey;
+  templateChildren: readonly EntityKey[];
 }
 
 interface ConditionalIR extends EntityBase<"conditional"> {
@@ -442,16 +504,6 @@ interface ConditionalIR extends EntityBase<"conditional"> {
   domain: "meta";
   mode: "when" | "switch-case";
   templateChildren: readonly EntityKey[];
-}
-
-interface ScoreIR {
-  base: number;
-  adjustments: readonly ScoreAdjustmentIR[];
-}
-
-interface ScoreAdjustmentIR {
-  when: ConditionIR;
-  add: number;
 }
 
 type ConditionIR =
@@ -485,9 +537,9 @@ interface ViewFootprint {
 }
 ```
 
-`templateChildren` and all of their descendants have `domain: "meta"`. They have branch-local IDs for validation and renderer instantiation, but no ordinary author path. The renderer evaluates `requires` and `score` using its context, then materializes the winning branch into Projection IR.
+The order of an owner's `views` array is the preference order. Selection: apply policy filters (forced view, detail bounds), then take the first view whose `requires` holds and whose footprint fits the allocation; on solver rejection continue with the next. `templateChildren` and all of their descendants have `domain: "meta"` with branch-local IDs and no ordinary author path.
 
-### 12.5.2 Projection instances and renderer context
+### 13.5.2 Projection instances and renderer context
 
 ```ts
 type InstanceKey = number;
@@ -517,19 +569,23 @@ interface RenderInstanceIR {
   parent: InstanceKey | null;
   context: ContextKey;
   selectedView?: EntityKey;
-  score?: ScoreExplanationIR;
+  selection?: readonly ViewSelectionStepIR[]; // explanation, in evaluation order
 }
 
-interface ScoreExplanationIR {
-  base: number;
-  applied: readonly { adjustment: number; condition: boolean }[];
-  total: number;
+interface ViewSelectionStepIR {
+  view: EntityKey;
+  outcome:
+    | "selected"
+    | "condition-failed"
+    | "footprint-failed"
+    | "policy-filtered"
+    | "solver-rejected";
 }
 ```
 
 The renderer constructs contexts; author code only reads their declared keys through `ContextValueIR`. Projection instances are target-local and never replace stable `EntityKey` values. `source` preserves the ordinary or template declaration from which each instance was created.
 
-### 12.6 Corridors
+### 13.6 Corridors
 
 ```ts
 interface CorridorIR extends EntityBase<"corridor"> {
@@ -547,13 +603,13 @@ interface CorridorIR extends EntityBase<"corridor"> {
 interface DividerSpec {
   label?: string;
   labelPlacement?: "start" | "center" | "end";
-  style?: LineStyleSpec;
+  style?: StyleProperties;
 }
 ```
 
 Implicit regions need no `CorridorIR` to be routable; a corridor entity exists only when a region is named, configured, subdivided, or decorated.
 
-### 12.7 Ports and port groups
+### 13.7 Ports and port groups
 
 ```ts
 type SharingMode = "merge" | "bundle" | "auto";
@@ -562,14 +618,14 @@ type Affinity = "merge" | "bundle" | "free" | "separate";
 
 interface PortIR extends EntityBase<"port"> {
   id: LocalId;
-  owner: EntityKey; // element or scope
+  owner: EntityKey;
   origin: "implicit" | "explicit" | "refined";
   side: Side | "auto";
   cardinality: "one" | "optional" | "many";
   capacity?: number;
   minSpacing?: Length;
   contentType?: string; // runtime tag from port<T>() when available
-  dockStyle?: DockStyleSpec;
+  dockStyle?: StyleProperties; // marker etc.; base of the dock cascade
   sharing: { mode: PortSharingMode; branch?: BranchPolicy };
 }
 
@@ -579,17 +635,6 @@ type PortMarkerSpec =
   | "square"
   | "diamond"
   | { kind: "extension"; namespace: string; name: string };
-
-interface DockStyleSpec {
-  marker?: PortMarkerSpec;
-  fill?: string;
-  stroke?: string;
-  width?: number;
-  size?: Length;
-  opacity?: number;
-  roughness?: number;
-  extensions?: Readonly<Record<string, unknown>>;
-}
 
 interface PortGroupIR extends EntityBase<"port-group"> {
   id: LocalId;
@@ -614,7 +659,7 @@ interface BranchPolicy {
 }
 ```
 
-### 12.8 Lines and segments
+### 13.8 Lines and segments
 
 ```ts
 interface LineIR extends EntityBase<"line"> {
@@ -624,7 +669,7 @@ interface LineIR extends EntityBase<"line"> {
   share?: ShareSpec;
   space: "reserve" | "overlay";
   avoid: readonly RegionRef[];
-  style?: LineStyleSpec;
+  style?: StyleProperties; // inline layer; line-applicable properties
 }
 
 type HeadSpec =
@@ -651,7 +696,7 @@ type EndpointDockIR =
       kind: "line-owned";
       line: EntityKey;
       end: 0 | 1;
-      style?: DockStyleSpec;
+      style?: StyleProperties; // dock-applicable properties
     };
 
 type EndpointTargetIR =
@@ -693,7 +738,7 @@ interface SegmentIR extends EntityBase<"segment"> {
     | { kind: "via"; waypoint: EntityKey }
     | { kind: "traversal"; scope: EntityKey; role: "exit" | "enter" };
   labels: readonly LabelIR[];
-  style?: LineStyleSpec; // branch-local override; shared trunks unify style
+  style?: StyleProperties; // branch-local override; shared trunks unify style
 }
 
 interface LabelIR {
@@ -702,45 +747,72 @@ interface LabelIR {
   orientation: "upright" | "along";
   role?: string;
 }
-
-interface LineStyleSpec {
-  stroke?: string;
-  width?: number;
-  dash?: "solid" | "dashed" | "dotted" | readonly number[];
-  opacity?: number;
-  roughness?: number;
-  heads?: readonly [HeadSpec, HeadSpec];
-  dock?: DockStyleSpec; // marker-specific additions or overrides at both ends
-}
 ```
 
-An authoring-level `labels` collection on a line is normalization sugar, not another IR location for labels. `start` entries attach to the labels of `ends[0]`, `end` entries to `ends[1]`, and `center` or `auto` entries to a suitable prominent segment. Labels declared on `<End>` children land directly on their `EndpointIR`. Multiple entries remain distinct `LabelIR` values in source order. This supports relation names, endpoint roles, multiplicities, guards, and sequence numbers without encoding several semantics into one string.
+An authoring-level `labels` collection on a line is normalization sugar, not another IR location for labels. `start` entries attach to the labels of `ends[0]`, `end` entries to `ends[1]`, and `center` or `auto` entries to a suitable prominent segment. Labels declared on `<End>` children land directly on their `EndpointIR`. Multiple entries remain distinct `LabelIR` values in source order.
 
 `<End>` children normalize into the same `EndpointIR` records as `from`/`to` props: the first `End` becomes `ends[0]`, per-`End` `head` values fill the `heads` tuple, a per-`End` `dock` block becomes the port-independent dock style, and `labels` land on the endpoint. Mixing `End` children with `from`/`to` props or with a conflicting line-level `heads` value is a diagnostic.
 
 `traversal` segments are the normalizer's record of inferred hierarchy crossings toward the least common ancestor. They are always `origin: "implicit"`; concrete portals, tracks, and bends first appear in Solved IR.
 
-For a port endpoint, the dock base style is `PortIR.dockStyle`; for a line-owned endpoint, it is `EndpointDockIR.style`. The compatible properties of `LineStyleSpec`, including its optional `dock` block, overlay that base property by property. A line value wins a conflict, while every non-conflicting base value survives. The resolved dock style is computed before any marker geometry that consumes routing or layout space.
+For a port endpoint, the dock base style is `PortIR.dockStyle`; for a line-owned endpoint, it is the endpoint's own dock style. The dock-applicable properties of the line's resolved style overlay that base property by property: a line value wins a conflict, while every non-conflicting base value survives. The resolved dock style is computed before any marker geometry that consumes routing or layout space.
 
-### 12.9 Notes
+### 13.9 Styles and rules
+
+One typed property namespace serves objects, lines, segments, docks, dividers, and rules. Which properties apply to which entity kind is documented per property, like CSS properties and display types; inapplicable properties are ignored with a lint-level warning.
 
 ```ts
-type NotePlacement =
-  | "auto"
-  | "above" | "below" | "left" | "right"
-  | "inside-top-left" | "inside-top" | "inside-top-right"
-  | "inside-left" | "inside-right"
-  | "inside-bottom-left" | "inside-bottom" | "inside-bottom-right";
+interface StyleProperties {
+  // paint
+  fill?: string;
+  stroke?: string;
+  strokeWidth?: number;
+  dash?: "solid" | "dashed" | "dotted" | readonly number[];
+  fillStyle?: "solid" | "hachure" | "cross-hatch"; // painterly fill technique
+  opacity?: number;
+  roughness?: number;        // inheritable
+  // text
+  fontFamily?: string;       // inheritable
+  fontSize?: number;         // inheritable
+  textOrientation?: "upright" | "frame"; // inheritable
+  // metrics — resolved before layout and routing
+  margin?: Length | BoxLengths;
+  padding?: Length | BoxLengths;
+  gap?: Length;
+  minWidth?: Length;
+  minHeight?: Length;
+  // docks
+  marker?: PortMarkerSpec;
+  markerSize?: Length;
+  extensions?: Readonly<Record<string, unknown>>;
+}
 
-interface NoteIR extends EntityBase<"note"> {
-  anchor: EntityKey | RegionRef | null; // null: participates in layout instead
-  placement: NotePlacement;
-  content: readonly ContentSpec[];
-  style?: StyleSpec;
+type RuleLayer = "renderer" | "theme" | "library" | "document";
+
+interface RuleIR extends EntityBase<"rule"> {
+  layer: RuleLayer;
+  selector: SelectorIR;
+  condition?: ConditionIR; // media/container query analog
+  declarations: StyleProperties;
+}
+
+interface SelectorStepIR {
+  kind?: EntityKind;
+  shape?: string;            // primitive kind or "namespace:name"
+  roles?: readonly string[];
+  classes?: readonly string[];
+  id?: LocalId;
+}
+
+interface SelectorIR {
+  steps: readonly SelectorStepIR[];                 // outermost to innermost
+  combinators: readonly ("descendant" | "child")[]; // length = steps.length - 1
 }
 ```
 
-### 12.10 Constraints and paint order
+Cascade resolution per entity and property: renderer default, then matching theme rules, library rules, document rules (later rules win within a layer), then the inline `style` value. Conditional rules participate only while their condition holds in the current render context. Multi-step selectors never match across an object with `styleBoundary: true`; single-step role/class selectors match everywhere. Inheritable properties flow down containment after cascade resolution.
+
+### 13.10 Constraints and paint order
 
 ```ts
 type Strength =
@@ -752,11 +824,16 @@ interface ConstraintBase<Type extends string> extends EntityBase<"constraint"> {
   strength: Strength;
 }
 
+type OrderBasis =
+  | { kind: "layout"; layout?: EntityKey }
+  | { kind: "spatial"; axis: Axis }
+  | { kind: "tracks"; within: RegionRef };
+
 type ConstraintIR =
   | (ConstraintBase<"order"> & {
       before: EntityKey;
       after: EntityKey;
-      within?: EntityKey | RegionRef; // layout, port group, or corridor tracks
+      basis: OrderBasis;
     })
   | (ConstraintBase<"adjacent"> & { members: readonly EntityKey[]; within?: EntityKey })
   | (ConstraintBase<"align"> & {
@@ -779,8 +856,6 @@ type ConstraintIR =
       from: EntityKey; // anchor entities
       to: EntityKey;
     })
-  | (ConstraintBase<"below"> & { item: EntityKey; reference: EntityKey })
-  | (ConstraintBase<"between"> & { item: EntityKey; first: EntityKey; second: EntityKey })
   | (ConstraintBase<"avoid-overlap"> & { members: readonly EntityKey[] });
 
 interface PaintRelationIR {
@@ -790,46 +865,29 @@ interface PaintRelationIR {
 }
 ```
 
-New constraint types are added as tagged variants or namespaced extensions; unstructured solver expressions never enter the portable core.
+The authoring conveniences `below`, `above`, and `between` normalize to `order` with a spatial basis (`between` becomes two relations). New constraint types are added as tagged variants or namespaced extensions; unstructured solver expressions never enter the portable core.
 
-### 12.11 Styles and extensions
-
-```ts
-interface StyleSpec {
-  fill?: string;
-  stroke?: string;
-  strokeWidth?: number;
-  dash?: "solid" | "dashed" | "dotted" | readonly number[];
-  fontFamily?: string;
-  fontSize?: number;
-  padding?: Length;
-  roughness?: number;
-  extensions?: Readonly<Record<string, unknown>>;
-}
-```
-
-Extension keys are namespace-qualified. Consumers reject unknown required extensions and may preserve unknown optional ones.
-
-## 13. Normalization mapping
+## 14. Normalization mapping
 
 How authoring constructs normalize (details and phases in [REQUIREMENTS.md](REQUIREMENTS.md)):
 
-- `Row`/`Column`/`Grid`/... outside meta branches produce addressable ordinary `LayoutIR`. The same declarations inside a view remain meta templates until materialized.
+- `Node`, `Scope`, and `Diagram` all produce `ObjectIR`; they differ only in defaults (shape and content versus children, boundary, and label). `Note` and other page furniture are library components producing anchored objects.
+- A `label` prop becomes a content entry with role `label`. `<Text>` inside an object becomes a content entry; `<Text>` in member position becomes an object with a text primitive. `<Compartment>` children become `group` content entries.
+- `Row`/`Column`/`Grid`/... outside meta branches produce addressable ordinary `LayoutIR`. The same declarations inside a view remain meta templates until materialized. Only placeable objects enter `members`; lines, segments, ports, port groups, corridors, constraints, rules, and anchored objects never do.
 - Every author-declared ordinary structural container retains its ID and containment parent; the normalizer never flattens it out of the address model. Meta containers and descendants retain IDs in their hidden branch-local tree.
-- Physical direction words in the source are stored as local directions; only the per-scope `orientation` carries rotation.
-- `gap()`/`padding()` calls become `RegionRef` values; a bare corridor id becomes `{ kind: "corridor" }`.
+- Physical direction words in the source are stored as local directions; only the per-container `orientation` carries rotation.
+- `gap()`/`padding()` calls become `RegionRef` values; `self` resolves to the declaring component's root container; a bare corridor id becomes `{ kind: "corridor" }`.
 - A named endpoint whose port has not been declared synthesizes a `PortIR` with `origin: "implicit"`. Nested and post-hoc `Port` declarations refine that same owner-and-ID identity, and TSX handles resolve to it.
 - An entity-only endpoint emits a `line-owned` `EndpointDockIR` derived from its line key and end index. It never synthesizes a `PortIR`, and equal target entities do not merge these dock identities.
 - A `Line` without explicit segments emits only implicit segments. Explicit `<Segment>` children are kept in order; the normalizer weaves implicit traversal segments between them.
 - `<End>` children normalize to `ends[0]` and `ends[1]` with their heads, dock styles, side hints, and end labels; `from`/`to` props are sugar for the same records. Mixing both forms, or fewer or more than two `End` children, is a diagnostic.
 - A line-level `label` becomes a `LabelIR` with `placement: "auto"`; an authoring-level `labels` collection distributes onto the two endpoints (`start`/`end`) and a suitable prominent segment (`center`/`auto`).
 - `heads="both"` and friends resolve to the per-end `heads` tuple.
-- `<Compartment>` children of an element become `group` content entries; a theme derives dividers between adjacent groups.
 - A `subject` prop becomes the entity's `SubjectRef`; the normalizer round-trips it without interpretation.
 - Lines sharing one canonical named port receive a port-derived `ShareSpec`; its mode and branch policy come from `PortIR.sharing`. Port-group affinity and explicit line groups apply only when they add a relation across distinct ports.
-- Dock style resolution overlays compatible line-style properties onto the port or line-owned dock style. The line wins conflicts and non-conflicting properties from both inputs survive.
-- `View` declarations emit hidden `ViewIR` alternatives with score expressions and template children. Normalization does not select or instantiate them.
+- `below`, `above`, and `between` constraint sugar normalizes to spatial `order` relations.
+- `rule()` declarations become `RuleIR` entities in their declaring layer; typed selector helpers and any equivalent string form normalize to the same `SelectorIR`. Inline `style` props stay on their entities as the innermost cascade layer.
+- `View` declarations emit `ViewIR` alternatives in declaration order with their `requires` conditions and template children. Normalization does not select or instantiate them; the renderer takes the first viable view in order.
 - Ordinary reference resolution skips the meta domain. The typed `alt()` helper — and any string sugar for it — emits an `alternatives` target whose exact-view and default cases are validated separately. Renderer materialization chooses a case, then truncates at the deepest instantiated object if necessary.
 - `PortPlacement` emits a meta mapping from one canonical ordinary port to one anchor in the containing view template.
-- The renderer creates context, evaluates scores and conditions, and emits Projection IR before layout and routing. This stage never re-runs TSX.
-- Notes with an anchor leave layout membership; notes without one join their parent's layout.
+- The renderer creates context, evaluates view conditions, conditional templates, and conditional rules, and emits Projection IR before layout and routing. This stage never re-runs TSX.

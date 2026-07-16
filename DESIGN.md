@@ -36,7 +36,7 @@ diagram.tsx
     -> custom JSX runtime and component expansion
     -> normalization and validation
     -> Logical IR + provenance + diagnostics
-    -> renderer context construction, view scoring, and meta-branch materialization
+    -> renderer context construction, first-fit view selection, and meta-branch materialization
     -> Projection IR + diagnostics
     -> layout and routing solver
     -> Solved IR + diagnostics
@@ -90,7 +90,7 @@ The schema package owns version identifiers, machine-readable schemas, feature d
 
 ### 3.6 Renderer planners
 
-A renderer planner consumes Logical IR plus target options and renderer capabilities. It constructs per-instance render contexts, scores hidden view branches, materializes the selected templates, evaluates conditional template adjustments, and emits Projection IR. It may cooperate iteratively with a solver when allocation or routing feedback invalidates a tentative branch. It never evaluates TSX.
+A renderer planner consumes Logical IR plus target options and renderer capabilities. It constructs per-instance render contexts, selects the first viable hidden view branch in declaration order, materializes the selected templates, evaluates conditional template adjustments, and emits Projection IR. It may cooperate iteratively with a solver when allocation or routing feedback invalidates a tentative branch. It never evaluates TSX.
 
 ### 3.7 Solvers
 
@@ -243,7 +243,7 @@ interface MaterializeOptions {
 interface MaterializeResult {
   projectionIR?: unknown;
   diagnostics: readonly Diagnostic[];
-  scoreExplanations: readonly ScoreExplanation[];
+  selectionExplanations: readonly ViewSelectionExplanation[];
 }
 
 interface SolveOptions {
@@ -261,7 +261,7 @@ interface SolveResult {
 }
 ```
 
-The concrete option types belong to the versioned Projection and Solved IR contracts. The renderer planner constructs immutable context per component instance, evaluates view scores, materializes hidden branches, applies conditional adjustments, resolves endpoint alternatives, and emits Projection IR. It must record enough context and score explanation to reproduce every choice.
+The concrete option types belong to the versioned Projection and Solved IR contracts. The renderer planner constructs immutable context per component instance, evaluates view conditions in declaration order, materializes the first viable branch, applies conditional template adjustments, resolves endpoint alternatives, and emits Projection IR. It must record enough context and selection explanation to reproduce every choice.
 
 Normal endpoint lookup never enters a meta branch. During materialization, endpoint alternatives may inspect the selected view and resolve one branch-local suffix. A remaining unmaterialized suffix truncates to its deepest projected instance. The planner records the selected case and truncation point for diagnostics and caching.
 
@@ -271,7 +271,7 @@ Given identical Logical IR, renderer version, target, inherited context, capabil
 
 ## 11. Renderer interface
 
-A public renderer owns a renderer planner and compatible solver integration, then passes Solved IR to a target painter. It returns output bytes or a streaming result together with optional Projection IR, optional Solved IR, score explanations, and structured diagnostics.
+A public renderer owns a renderer planner and compatible solver integration, then passes Solved IR to a target painter. It returns output bytes or a streaming result together with optional Projection IR, optional Solved IR, view-selection explanations, and structured diagnostics.
 
 Painter responsibilities include:
 
@@ -281,9 +281,31 @@ Painter responsibilities include:
 - clipping, pagination, tiling, or viewport output when requested;
 - reporting unsupported required features.
 
-A renderer package may expose policies such as `maximum-that-fits` and `outside-in`. Internally these policies drive context construction, score-based view materialization, conditional template adjustment, solving, and only then painting. They must not re-evaluate component code or hide view choices in target-specific output only.
+A renderer package may expose policies such as `maximum-that-fits` and `outside-in`. Internally these policies drive context construction, first-fit view materialization, conditional template adjustment, solving, and only then painting. They must not re-evaluate component code or hide view choices in target-specific output only.
 
 A renderer must not re-run component code. Target-specific IDs should derive deterministically from Solved IR identities where the output format permits it.
+
+### 11.1 Solved IR contract
+
+SVG and Excalidraw both sit behind the painter boundary, but they are different kinds of targets: SVG is pure structured geometry, while an Excalidraw document is geometry plus residual topology (bindings, bound text, frames) that stays live-editable. Solved IR must serve both, which fixes several properties:
+
+- **Geometry plus provenance, never geometry alone.** Every solved fragment keeps its logical linkage: which polyline belongs to which line and segment, which endpoint attaches to which object or port, which text is whose label or content, which rectangle is whose boundary. Flattening to anonymous shapes would make the Excalidraw target impossible and degrade the SVG target.
+- **Local coordinates with a transform stack.** Geometry is expressed per container in its local frame, composed by parent transforms — the SVG `viewBox` lesson. A rotated container is one transform; identical component projections are cacheable; tiles and viewports slice the transform tree instead of recomputing world coordinates.
+- **A small geometric vocabulary.** Solved fragments lower to paths, text runs, and images. Model semantics never leak into the painter contract.
+- **Text is solved, not delegated.** Measurement, wrapping, and label placement happen in the solver against declared fonts and metrics. Painters place finished text runs; no output format is trusted with layout (SVG famously has none).
+- **A total paint order.** `PaintRelation` partial orders are linearized into one total order per rendered fragment. Painters that emit structural groups (one per object) may split groups where the paint order requires interleaving.
+
+### 11.2 Stable output identity and painterly determinism
+
+The canonical containment address — not the ephemeral `EntityKey` — is the stable identity across builds and exports. Painters derive target IDs from canonical addresses (with deterministic derivation for anonymous entities). Re-exporting a changed model into an existing target document then **updates elements instead of replacing them**, so a target editor can diff, merge, and preserve manual adjustments where its format allows.
+
+Painterly randomness is seeded, never ambient: hand-drawn jitter (rough.js style) derives its per-element seed from the canonical address plus the build seed. Re-rendering an unchanged element reproduces identical strokes; determinism extends through the last painterly detail.
+
+### 11.3 Target painters: SVG and Excalidraw
+
+The SVG painter emits structured output, not flattened shape soup: one group per object with the composed transform, roles and classes as `class` attributes, the canonical address as a stable `id` or data attribute, labels as `<title>`/`<desc>` where appropriate, and heads as reusable `<marker>` definitions. The result remains stylable, scriptable, accessible, and traceable back to the model.
+
+The Excalidraw painter preserves as much live topology as the format carries: line endpoints become element **bindings** (`startBinding`/`endBinding`) instead of dead coordinates, labels become **bound text**, container boundaries map to frames or grouped rectangles depending on nesting depth, and element IDs, versions, and seeds follow section 11.2 so re-export merges instead of clobbers. Known format limits are documented, not papered over: Excalidraw cannot bind an arrow to another arrow, so branches of a merged trunk attach at unbound coordinates and lose follow-behavior; deeply nested frames degrade to rectangles plus groups.
 
 ## 12. Assets and dependency manifests
 
@@ -361,7 +383,7 @@ The fixtures under [`examples/`](examples/) are golden inputs. Once implementati
 
 - canonical Logical IR;
 - provenance with stable source mappings;
-- one or more Projection IR results with render contexts and view-score explanations;
+- one or more Projection IR results with render contexts and view-selection explanations;
 - one or more Solved IR results for named solvers;
 - renderer outputs;
 - structured diagnostics, including expected warnings.
@@ -370,7 +392,7 @@ Required test layers are:
 
 - JSX-runtime expression tests;
 - component-expansion and normalization tests;
-- renderer-context, score, conditional-materialization, and endpoint-alternative tests;
+- renderer-context, view-scoring, conditional-materialization, and endpoint-alternative tests;
 - schema validation and canonical serialization tests;
 - JSON/YAML round-trip tests;
 - cross-language TypeScript/Go/Rust consumer tests;
