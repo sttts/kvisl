@@ -317,6 +317,7 @@ function defaultPadding(object, tokens) {
   if (object.kind === "diagram") return boxLengths(object.style.padding, 28, tokens);
   if (["row", "column", "grid"].includes(object.kind)) return boxLengths(object.style.padding, 0, tokens);
   if (object.kind === "title" || object.kind === "subtitle") return boxLengths(object.style.padding, 2, tokens);
+  if (object.kind === "legend-item") return boxLengths(object.style.padding, 3, tokens);
   if (object.kind === "image") return boxLengths(object.style.padding, 0, tokens);
   if (object.kind === "note" && object.style.stroke === "transparent") return boxLengths(object.style.padding, 4, tokens);
   return boxLengths(object.style.padding, object.kind === "scope" ? 22 : 14, tokens);
@@ -343,7 +344,7 @@ function measureObject(object, scene) {
   object.contentHeight = content.height + header;
   const members = flowChildren(object);
   const layout = effectiveLayout(object);
-  const baseGap = length(object.style.gap ?? object.layout?.gap, layout ? 22 : 0, tokens);
+  const baseGap = length(object.style.gap ?? object.layout?.gap, layout ? (object.kind === "legend" ? 8 : 22) : 0, tokens);
   const gaps = Array.from({ length: Math.max(0, members.length - 1) }, (_, index) =>
     baseGap + (object.reserved.gaps[index] ?? 0));
   object.gapSizes = gaps;
@@ -398,12 +399,9 @@ function measureObject(object, scene) {
     bodyHeight = 12;
   }
 
-  const minimumWidth = object.kind === "title" || object.kind === "subtitle" ? 0
-    : object.kind === "diagram" ? 0
-    : object.visible ? 72 : 0;
-  const minimumHeight = object.kind === "title" || object.kind === "subtitle" ? 0
-    : object.kind === "diagram" ? 0
-    : object.visible ? 38 : 0;
+  const textual = ["title", "subtitle", "legend-item", "diagram"].includes(object.kind);
+  const minimumWidth = textual ? 0 : object.visible ? 72 : 0;
+  const minimumHeight = textual ? 0 : object.visible ? 38 : 0;
   const contentBesideChildren = members.length === 0;
   const innerWidth = Math.max(bodyWidth, content.width);
   const innerHeight = bodyHeight + (contentBesideChildren ? content.height : object.contentHeight);
@@ -534,27 +532,34 @@ function computeSizeFloors(scene) {
     .filter((constraint) => constraint.kind === "extent" && constraint.itemObject)
     .map((constraint) => constraint.itemObject));
   const eligible = (object) => harmonizable(object) && !constraintSized.has(object);
-  // equalize only near misses: stretching a short member to several times its
-  // size fills the drawing with emptiness instead of calming it
+  // an invisible layout container is pure coordinate space: stretching it
+  // costs no visible emptiness and gives distribute and neighbor alignment
+  // their room to work
+  const structural = (object) => !object.visible
+    && ["row", "column", "grid"].includes(object.kind)
+    && !constraintSized.has(object);
+  // visible members equalize only near misses: stretching a short member to
+  // several times its size fills the drawing with emptiness
   const stretchTo = (child, dimension, target) => {
+    if (structural(child)) return raiseFloor(child, dimension, target);
+    if (!eligible(child)) return false;
     if (target > child.measured[dimension] * 1.5 + 40) return false;
     return raiseFloor(child, dimension, target);
   };
 
   for (const container of scene.objects) {
-    const members = flowChildren(container).filter((child) => child.visible);
+    const members = flowChildren(container);
     if (!members.length) continue;
     const layout = effectiveLayout(container);
     if (layout === "row") {
       const target = Math.max(...members.map((child) => child.measured.height));
-      for (const child of members.filter(eligible)) raised = stretchTo(child, "height", target) || raised;
+      for (const child of members) raised = stretchTo(child, "height", target) || raised;
     } else if (layout === "column") {
       const target = Math.max(...members.map((child) => child.measured.width));
-      for (const child of members.filter(eligible)) raised = stretchTo(child, "width", target) || raised;
+      for (const child of members) raised = stretchTo(child, "width", target) || raised;
     } else if (layout === "grid" && container.layoutData) {
       const { columns, columnWidths, rowHeights } = container.layoutData;
-      members.filter(eligible).forEach((child) => {
-        const index = members.indexOf(child);
+      members.forEach((child, index) => {
         raised = stretchTo(child, "width", columnWidths[index % columns] ?? 0) || raised;
         raised = stretchTo(child, "height", rowHeights[Math.floor(index / columns)] ?? 0) || raised;
       });
@@ -673,9 +678,12 @@ function assignAnchored(scene) {
     && !["title", "subtitle", "legend-item"].includes(object.kind));
   const placed = [];
   for (const object of scene.objects.filter((item) => item.anchor)) {
+    // keep the declared alignment through growing distances before trying
+    // the other alignments — falling back sideways is the bigger change
+    const declaredAlign = object.placement?.align ?? "center";
     const variants = [{}];
-    for (const distance of [12, 28, 48, 72]) {
-      for (const align of ["center", "start", "end"]) variants.push({ distance, align });
+    for (const align of [declaredAlign, ...["center", "start", "end"].filter((item) => item !== declaredAlign)]) {
+      for (const distance of [12, 28, 48, 72]) variants.push({ distance, align });
     }
     let position = null;
     for (const variant of variants) {
@@ -744,6 +752,63 @@ function applyConstraints(scene) {
   }
 }
 
+// Slide row/column members with slack over their connected counterparts in
+// other containers — an actor lands above the box it feeds. Order and the
+// measured minimum gaps stay intact, so tightly packed containers never move.
+function alignConnectedNeighbors(scene) {
+  for (const container of scene.objects) {
+    const layout = effectiveLayout(container);
+    if (layout !== "row" && layout !== "column") continue;
+    if ((container.physicalOrientation ?? 0) % 360 !== 0) continue;
+    const members = flowChildren(container);
+    if (members.length < 2) continue;
+    const horizontal = layout === "row";
+    const axis = horizontal ? "x" : "y";
+    const extent = horizontal ? "width" : "height";
+
+    const inSubtree = (object, member) => object === member || isDescendantOf(object, member);
+    const desired = members.map((member) => {
+      const centers = [];
+      for (const line of scene.lines) {
+        if (!line.from?.object || !line.to?.object) continue;
+        const fromIn = inSubtree(line.from.object, member);
+        const toIn = inSubtree(line.to.object, member);
+        if (fromIn === toIn) continue;
+        const remote = fromIn ? line.to.object : line.from.object;
+        if (remote === container || isDescendantOf(remote, container)) continue;
+        centers.push(remote.box[axis] + remote.box[extent] / 2);
+      }
+      if (!centers.length) return member.box[axis] + member.box[extent] / 2;
+      return centers.reduce((sum, value) => sum + value, 0) / centers.length;
+    });
+
+    const minGaps = container.gapSizes ?? [];
+    // the full padded interior is available, not just the current member span
+    const padding = container.paddingBox ?? { top: 0, right: 0, bottom: 0, left: 0 };
+    const lower = Math.min(
+      members[0].box[axis],
+      container.box[axis] + (horizontal ? padding.left : padding.top + (container.contentHeight ?? 0)),
+    );
+    const upper = Math.max(
+      members.at(-1).box[axis] + members.at(-1).box[extent],
+      container.box[axis] + container.box[extent] - (horizontal ? padding.right : padding.bottom),
+    );
+    // suffix demand keeps every later member placeable within the span
+    const demand = Array(members.length).fill(0);
+    for (let index = members.length - 2; index >= 0; index -= 1) {
+      demand[index] = demand[index + 1] + members[index + 1].box[extent] + (minGaps[index] ?? 0);
+    }
+    let cursor = lower;
+    members.forEach((member, index) => {
+      const max = upper - demand[index] - member.box[extent];
+      const target = Math.max(cursor, Math.min(max, desired[index] - member.box[extent] / 2));
+      const delta = target - member.box[axis];
+      if (Math.abs(delta) > 0.5) shiftObject(member, horizontal ? delta : 0, horizontal ? 0 : delta);
+      cursor = target + member.box[extent] + (minGaps[index] ?? 0);
+    });
+  }
+}
+
 function normalizeCanvas(scene) {
   const painted = scene.objects.filter((object) => object !== scene.root);
   const minX = Math.min(0, ...painted.map((object) => object.box.x));
@@ -773,6 +838,7 @@ export function layout(scene) {
   scene.root.localX = 0;
   scene.root.localY = 0;
   assignGlobal(scene.root, { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 });
+  alignConnectedNeighbors(scene);
   assignAnchored(scene);
   applyConstraints(scene);
   normalizeCanvas(scene);
