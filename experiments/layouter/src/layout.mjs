@@ -112,6 +112,18 @@ function physicalGapRegions(first, second, regions, options = {}) {
   return result;
 }
 
+// a gap corridor runs vertically when it separates same-row neighbors —
+// labels riding it need horizontal room, not vertical
+function gapRunsVertically(region) {
+  const layout = effectiveLayout(region.owner);
+  if (layout === "grid") {
+    const members = region.owner.children.filter((child) => !child.anchor && !child.frame);
+    const columns = Math.max(1, Math.min(region.owner.columns ?? 1, members.length));
+    return Math.floor(region.index / columns) === Math.floor((region.index + 1) / columns);
+  }
+  return layout === "row";
+}
+
 function paddingRegion(container, side, regions) {
   if (!container || !SIDES.includes(side)) return null;
   const key = regionKey("padding", container, side);
@@ -227,7 +239,7 @@ export function reserveRoutingSpace(scene) {
     region.spacing = minSpacing + (1 - pressure) * (preferredSpacing - minSpacing);
     const labelAxis = region.kind === "padding"
       ? region.side === "left" || region.side === "right" ? "horizontal" : "vertical"
-      : effectiveLayout(region.owner) === "row" ? "horizontal" : "vertical";
+      : gapRunsVertically(region) ? "horizontal" : "vertical";
     const labelDemand = Math.max(0, ...region.entries
       .filter((entry) => entry.line.labelRegionKey === region.key)
       .map((entry) => lineLabelDemand(entry.line, labelAxis)));
@@ -566,7 +578,6 @@ function computeSizeFloors(scene) {
   // visible members equalize only near misses: stretching a short member to
   // several times its size fills the drawing with emptiness
   const stretchTo = (child, dimension, target) => {
-    if (structural(child)) return raiseFloor(child, dimension, target);
     if (!eligible(child)) return false;
     if (target > child.measured[dimension] * 1.5 + 40) return false;
     return raiseFloor(child, dimension, target);
@@ -576,17 +587,35 @@ function computeSizeFloors(scene) {
     const members = flowChildren(container);
     if (!members.length) continue;
     const layout = effectiveLayout(container);
-    if (layout === "row") {
-      const target = Math.max(...members.map((child) => child.measured.height));
-      for (const child of members) raised = stretchTo(child, "height", target) || raised;
-    } else if (layout === "column") {
-      const target = Math.max(...members.map((child) => child.measured.width));
-      for (const child of members) raised = stretchTo(child, "width", target) || raised;
+    if (!layout) continue;
+    // a visible member equalizes only with lookalike siblings (same peer
+    // signature) — equal size among equals, content-minimal otherwise; a
+    // structurally different neighbor never inflates a box
+    const groups = new Map();
+    for (const child of members) {
+      if (structural(child)) continue;
+      const signature = peerSignature(child);
+      if (!groups.has(signature)) groups.set(signature, []);
+      groups.get(signature).push(child);
+    }
+    if (layout === "row" || layout === "column") {
+      const dimension = layout === "row" ? "height" : "width";
+      const overall = Math.max(...members.map((child) => child.measured[dimension]));
+      for (const child of members) {
+        if (structural(child)) raised = raiseFloor(child, dimension, overall) || raised;
+      }
+      for (const group of groups.values()) {
+        if (group.length < 2) continue;
+        const target = Math.max(...group.map((child) => child.measured[dimension]));
+        for (const child of group) raised = stretchTo(child, dimension, target) || raised;
+      }
     } else if (layout === "grid" && container.layoutData) {
       const { columns, columnWidths, rowHeights } = container.layoutData;
       members.forEach((child, index) => {
-        raised = stretchTo(child, "width", columnWidths[index % columns] ?? 0) || raised;
-        raised = stretchTo(child, "height", rowHeights[Math.floor(index / columns)] ?? 0) || raised;
+        if (!structural(child) && (groups.get(peerSignature(child))?.length ?? 0) < 2) return;
+        const lift = structural(child) ? raiseFloor : stretchTo;
+        raised = lift(child, "width", columnWidths[index % columns] ?? 0) || raised;
+        raised = lift(child, "height", rowHeights[Math.floor(index / columns)] ?? 0) || raised;
       });
     }
   }
