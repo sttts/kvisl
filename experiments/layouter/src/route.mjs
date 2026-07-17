@@ -361,17 +361,37 @@ function orthogonal(first, second, index, ignored, routeIndex, line) {
   const score = (candidate) => candidateScore(candidate, index, ignored, routeIndex, line);
   candidates.sort((a, b) => score(a) - score(b));
   let best = candidates[0];
-  // when the best route still hits something, try going around that specific
-  // obstacle; two bounded refinement levels, no open-ended search
+  // when the best route still hits an obstacle or shares a run with an
+  // unrelated line, try targeted repairs; two bounded levels, no open search
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const obstacle = collidingObstacle(best, index, ignored);
-    if (!obstacle) break;
-    const around = aroundCandidates(first, second, obstacle.box, detour).map(simplify);
-    const challenger = around.sort((a, b) => score(a) - score(b))[0];
+    let repairs = [];
+    if (obstacle) {
+      repairs = aroundCandidates(first, second, obstacle.box, detour);
+    } else {
+      const run = overlappingRun(best, routeIndex, line);
+      if (!run) break;
+      const offsets = [10, -10, 22, -22];
+      repairs = run.first.x === run.second.x
+        ? offsets.map((offset) => [first, { x: run.first.x + offset, y: first.y }, { x: run.first.x + offset, y: second.y }, second])
+        : offsets.map((offset) => [first, { x: first.x, y: run.first.y + offset }, { x: second.x, y: run.first.y + offset }, second]);
+    }
+    const challenger = repairs.map(simplify).sort((a, b) => score(a) - score(b))[0];
     if (!challenger || score(challenger) >= score(best)) break;
     best = challenger;
   }
   return best;
+}
+
+function overlappingRun(points, routeIndex, line) {
+  for (let i = 1; i < points.length; i += 1) {
+    const candidate = { first: points[i - 1], second: points[i] };
+    for (const routed of routeIndex.querySegment(candidate.first, candidate.second)) {
+      if (routed.line === line) continue;
+      if (segmentInteraction(candidate, routed) === "overlap" && !linesMayShare(line, routed.line)) return candidate;
+    }
+  }
+  return null;
 }
 
 function collidingObstacle(points, index, ignored) {

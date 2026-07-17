@@ -534,6 +534,12 @@ function computeSizeFloors(scene) {
     .filter((constraint) => constraint.kind === "extent" && constraint.itemObject)
     .map((constraint) => constraint.itemObject));
   const eligible = (object) => harmonizable(object) && !constraintSized.has(object);
+  // equalize only near misses: stretching a short member to several times its
+  // size fills the drawing with emptiness instead of calming it
+  const stretchTo = (child, dimension, target) => {
+    if (target > child.measured[dimension] * 1.5 + 40) return false;
+    return raiseFloor(child, dimension, target);
+  };
 
   for (const container of scene.objects) {
     const members = flowChildren(container).filter((child) => child.visible);
@@ -541,16 +547,16 @@ function computeSizeFloors(scene) {
     const layout = effectiveLayout(container);
     if (layout === "row") {
       const target = Math.max(...members.map((child) => child.measured.height));
-      for (const child of members.filter(eligible)) raised = raiseFloor(child, "height", target) || raised;
+      for (const child of members.filter(eligible)) raised = stretchTo(child, "height", target) || raised;
     } else if (layout === "column") {
       const target = Math.max(...members.map((child) => child.measured.width));
-      for (const child of members.filter(eligible)) raised = raiseFloor(child, "width", target) || raised;
+      for (const child of members.filter(eligible)) raised = stretchTo(child, "width", target) || raised;
     } else if (layout === "grid" && container.layoutData) {
       const { columns, columnWidths, rowHeights } = container.layoutData;
       members.filter(eligible).forEach((child) => {
         const index = members.indexOf(child);
-        raised = raiseFloor(child, "width", columnWidths[index % columns] ?? 0) || raised;
-        raised = raiseFloor(child, "height", rowHeights[Math.floor(index / columns)] ?? 0) || raised;
+        raised = stretchTo(child, "width", columnWidths[index % columns] ?? 0) || raised;
+        raised = stretchTo(child, "height", rowHeights[Math.floor(index / columns)] ?? 0) || raised;
       });
     }
   }
