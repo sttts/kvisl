@@ -54,11 +54,11 @@ Generated from the repository TSX fixtures. Complete channel-mesh cells are pain
 
 ## modelplane-fleet-inference
 
-38 objects · 19 lines · 1639×1454
+39 objects · 19 lines · 1687×1426
 
 **Structural quality:** 0 layout contract violations · 0 object overlaps · 0 route–object intersections · 0 label–object overlaps · 0 label–label overlaps · 0 label–route overlaps · 0 unexpected shared runs · 1 crossings · 0 title crossings · 0 label–decor overlaps
 
-**Perception:** 2.16 bends/line (max 5) · detour ×1.13 · backtrack 2% · 45/29 x/y guides for 21 boxes · peer-size CV 0.08 · gap CV 0.20 · label offset 18.0px
+**Perception:** 1.79 bends/line (max 4) · detour ×1.02 · backtrack 1% · 47/32 x/y guides for 22 boxes · peer-size CV 0.08 · gap CV 0.20 · label offset 18.0px
 
 <table>
   <tr><th>Original</th><th>Prototype SVG</th></tr>
@@ -184,7 +184,7 @@ Generated from the repository TSX fixtures. Complete channel-mesh cells are pain
 
 **Structural quality:** 0 layout contract violations · 0 object overlaps · 0 route–object intersections · 0 label–object overlaps · 0 label–label overlaps · 0 label–route overlaps · 0 unexpected shared runs · 0 crossings · 0 title crossings · 0 label–decor overlaps
 
-**Perception:** 1.80 bends/line (max 4) · detour ×1.15 · backtrack 7% · 20/29 x/y guides for 13 boxes · peer-size CV 0.20 · gap CV 0.00 · label offset 53.5px
+**Perception:** 1.60 bends/line (max 4) · detour ×1.15 · backtrack 7% · 20/29 x/y guides for 13 boxes · peer-size CV 0.20 · gap CV 0.00 · label offset 53.5px
 
 <table>
   <tr><th>Original</th><th>Prototype SVG</th></tr>

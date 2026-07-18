@@ -287,11 +287,75 @@ test("a CSS-style theme changes presentation without changing Modelplane geometr
 
   assert.equal(themed.scene.root.style.fill, "canvas");
   assert.equal(themed.scene.objectByPath.get("actors/client").style.fill, "surface");
+  for (const path of ["fleet/cluster-a/locality", "fleet/external-targets/stubs", "footer"]) {
+    assert.equal(themed.scene.objectByPath.get(path).style.fill, "surface");
+  }
   assert.deepEqual(boxes(themed.scene), boxes(base.scene));
   assert.deepEqual(routes(themed.scene), routes(base.scene));
   assert.doesNotMatch(themed.svg, /id="routing-regions"/);
   assert.match(themed.svg, /<rect width="100%" height="100%" fill="#100d2e"\/>/);
   assert.match(themed.svg, /font-family="Inter, ui-sans-serif, system-ui, sans-serif"/);
+});
+
+test("Modelplane fixture centers its control-plane label and leaves the external port unmarked", async () => {
+  const entry = path.join(repo, "examples", "modelplane-fleet-inference", "diagram.tsx");
+  const { scene } = await solveFile(entry);
+  const controlPlane = scene.objectByPath.get("control-plane");
+  const label = scene.objectByPath.get("control-plane/control-plane-label");
+  const mlIntent = scene.lines.find((line) => line.fromRef === "actors/teams/ml-team.control");
+  const endpoint = scene.objectByPath.get("fleet/external-targets/external-endpoint");
+  const request = endpoint.ports.get("request");
+
+  assert.equal(label.box.x + label.box.width / 2, controlPlane.box.x + controlPlane.box.width / 2);
+  assert.equal(new Set(mlIntent.route.map((point) => point.x)).size, 1);
+  assert.equal(request.marker, "none");
+  assert.equal(request.physicalSide, "top");
+});
+
+test("dock sliding reroutes authored corridor pins instead of preserving a stale jog", async () => {
+  const entry = path.join(repo, "examples", "modelplane-fleet-inference", "diagram.tsx");
+  const { scene } = await solveFile(entry);
+  const line = scene.lines.find((candidate) => candidate.id === "place-cluster-a");
+  const region = scene.regions.get("gap:$root:4");
+  const track = line.regionTracks.get(region.key);
+  const target = line.to.port.anchor;
+  const originalCenter = target.box.x + target.box.width / 2;
+  const corridorRun = line.route.slice(1)
+    .map((point, index) => ({ first: line.route[index], second: point }))
+    .find(({ first, second }) => first.y === second.y && first.y === track.allocation.coordinate
+      && first.x !== second.x);
+
+  assert.notEqual(line.to.point.x, originalCenter);
+  assert.ok(line.route.every((point) => point.x !== originalCenter));
+  assert.ok(corridorRun);
+  assert.equal(corridorRun.second.x, line.to.point.x);
+  assert.ok(line.requiredRoutePins.every((pin) => line.route.some((point) =>
+    point.x === pin.x && point.y === pin.y)));
+});
+
+test("deep side ports reserve centered longitudinal tracks in adjacent sibling gaps", async () => {
+  const entry = path.join(repo, "examples", "modelplane-fleet-inference", "diagram.tsx");
+  const { scene } = await solveFile(entry);
+  for (const [lineId, gapIndex] of [["request-cluster-a", 0], ["request-cluster-b", 1]]) {
+    const line = scene.lines.find((candidate) => candidate.id === lineId);
+    const region = scene.regions.get(`gap:fleet:${gapIndex}`);
+    const track = line.regionTracks.get(region.key);
+    const geometry = regionGeometry(region);
+    const verticalRun = line.route.slice(1)
+      .map((point, index) => ({ first: line.route[index], second: point }))
+      .find(({ first, second }) => first.x === second.x && first.x === track.allocation.coordinate
+        && first.y !== second.y);
+
+    assert.equal(region.entries.find((entry) => entry.line === line).usage, "track");
+    assert.equal(region.channelBinding.trackCell.materialized, true);
+    assert.ok(region.owner.reserved.gaps[gapIndex] >= region.thickness);
+    assert.ok(geometry.width >= region.thickness);
+    assert.equal(track.crossing, false);
+    assert.equal(track.allocation.coordinate, geometry.x + geometry.width / 2);
+    assert.ok(verticalRun);
+  }
+  const placement = scene.lines.find((candidate) => candidate.id === "place-cluster-a");
+  assert.equal(placement.regionTracks.has("gap:fleet:0"), false);
 });
 
 test("route-aware alignment preserves declared space-between distribution", async () => {

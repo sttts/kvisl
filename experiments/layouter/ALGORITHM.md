@@ -195,6 +195,8 @@ A routing obligation is not yet a polyline. It contains:
 
 An itinerary is represented as tokens such as `exit child through right padding`, `cross sibling gap`, `use named corridor`, and `enter child through top padding`. Consecutive hierarchy ranges may remain compressed until geometry is emitted.
 
+A named wrapper port may be placed on a selected descendant while retaining the wrapper as its logical owner. When that fixed side faces an adjacent row or column sibling and the remote endpoint lies outside the wrapper's parent, the itinerary includes the intervening sibling gap as a longitudinal endpoint-access track. That gap is materialized and sized before coordinates are assigned. The short endpoint escape stub remains local to the dock and may never be extended through the hierarchy as a substitute for an unreserved access track. Deriving these obligations walks only the endpoint containment path, or its compressed equivalent, and is therefore `O(H)` per endpoint in the direct prototype and `O(log N + J)` with the containment index.
+
 ### 5.5 Routing envelopes
 
 Every solved or provisionally solved container exposes a summary to its parent:
@@ -525,6 +527,8 @@ The symbolic itinerary is lowered into concrete local geometry:
 Region pins constrain only the dimension the region semantically owns. A longitudinal track fixes its cross-axis coordinate but remains movable along the track; a perpendicular crossing fixes the region intersection while allowing the adjacent branch run to choose the shortest legal axial position. Authored waypoints and explicit branch points remain fully hard. This distinction prevents an implicit padding crossing from becoming an accidental two-axis waypoint that creates a return jog.
 
 Polyline simplification may remove a collinear region vertex from the emitted point list, but the resulting segment must still contain that region pin geometrically. A bounded improvement is rejected if it moves the route off any required pin. Shared branch pins are materialized again as explicit vertices after improvement because they encode topology, not merely geometry.
+
+Dock sliding is a bounded endpoint decision, not a post-processing mutation. Moving a dock invalidates every soft pin and escape point derived from its previous coordinate. The affected route is rebuilt from its unchanged symbolic itinerary and current track allocations before further simplification; stale pin coordinates must not survive as protected bends. Joined ports retain their canonical dock and ordering constraints, so a slide never changes topology or splits a shared port.
 
 The terminal head reserve is a hard geometric invariant, not an aesthetic score. Simplification, dock sliding, bundling, and bounded refinement may lengthen that straight terminal run but must never insert a bend inside it. Head geometry has one shared source of truth for routing and painting, so a painter-side head-size change updates the required route reserve with it. When that terminal run occupies a sibling gap, measurement reserves the run plus ordinary route-to-object clearance; the router must not manufacture the space by entering a neighboring object.
 

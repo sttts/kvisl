@@ -195,10 +195,17 @@ function ControlPlane() {
   return (
     <Scope
       id="control-plane"
-      label="Modelplane control plane (Crossplane v2)"
       role="control-plane"
       layout={{ kind: "column", gap: "medium" }}
     >
+      <Note
+        id="control-plane-label"
+        placement={{ area: "inside", side: "top", align: "center" }}
+        style={{ fill: "transparent", stroke: "transparent", color: "structural-gray", padding: 0 }}
+      >
+        Modelplane control plane (Crossplane v2)
+      </Note>
+
       <Row id="control-flow" align="center" gap="large">
         <Node id="ml-apis" role="ml-api">
           <Text>ML APIs</Text>
@@ -359,7 +366,6 @@ export function ModelplaneFleetInferenceDiagram({ styles = [] }) {
     <Port
       ref="fleet/external-targets/external-endpoint.request"
       side="top"
-      marker="circle"
     />
 
     {/* the whitespace between the two bands carries both buses as ordered

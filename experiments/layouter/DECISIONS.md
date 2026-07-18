@@ -142,3 +142,11 @@ The prototype builds the channel mesh before routing and binds every active logi
 Direct parent/child cells connect only at real shared boundaries. Padding cells leave through their own side, and corner junctions leave only through their declared outward sides.
 
 Rationale: a debug mesh reconstructed independently from routing can look correct while the line follows different coordinates. One topology makes centering, transitions, debug output, and performance assertions inspectable against the same data.
+
+## D19. Endpoint access is a track, and dock movement invalidates geometry
+
+A fixed side port exposed on a descendant reserves a longitudinal track in the adjacent row or column sibling gap when that gap is its hierarchy-scale approach. The gap is materialized and contributes thickness before layout; the port's escape stub remains a short terminal run and never substitutes for that track.
+
+If a later bounded routing pass slides a dock along its legal side slot, every route derived from the old coordinate is rebuilt from the same symbolic itinerary and allocations. Old soft pins are discarded rather than protected as bends.
+
+Rationale: extending a terminal stub through an inactive gap draws off-center without reserving space. Mutating a dock after routing while retaining old pins creates an avoidable return jog even though both the new dock and the authored corridor are individually correct.

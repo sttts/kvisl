@@ -1,6 +1,6 @@
 import { minimumHeadRun, normalizedHeads } from "./heads.mjs";
+import { SIDES, absoluteOrientation, rotateSide } from "./orientation.mjs";
 
-const SIDES = ["top", "right", "bottom", "left"];
 const SPACING = { none: 0, tiny: 6, small: 12, medium: 20, large: 32, xlarge: 48 };
 const ROUTE_CLEARANCE = 12;
 const BOUNDARY_CROSSING_BAND = 16;
@@ -164,6 +164,37 @@ function nestedExitReservations(endpoint, lca, side, line, regions) {
   }
 }
 
+// A deeply exposed side port may approach its owner through the adjacent
+// sibling gap before it reaches the outer, authored corridor. Reserve that
+// longitudinal access track symbolically; an endpoint escape stub is local
+// geometry and must never stand in for this hierarchy-scale travel.
+function endpointApproachReservations(endpoint, lca, line, regions) {
+  const target = endpoint.port?.anchor ?? endpoint.object;
+  if (!endpoint.port?.anchor || !target || !SIDES.includes(endpoint.port.side)) return;
+  const physicalSide = rotateSide(endpoint.port.side, absoluteOrientation(target));
+  line.approachRegions ??= new Map();
+
+  for (let current = endpoint.object; current?.parent && current.parent !== lca; current = current.parent) {
+    const owner = current.parent;
+    const layout = effectiveLayout(owner);
+    if (layout !== "row" && layout !== "column") continue;
+    const branch = branchBelow(owner, target);
+    const members = flowChildren(owner);
+    const index = members.indexOf(branch);
+    if (index < 0) continue;
+    const logicalSide = rotateSide(physicalSide, -absoluteOrientation(owner));
+    const delta = layout === "row"
+      ? logicalSide === "right" ? 1 : logicalSide === "left" ? -1 : 0
+      : logicalSide === "bottom" ? 1 : logicalSide === "top" ? -1 : 0;
+    const sibling = members[index + delta];
+    if (!delta || !sibling) continue;
+    for (const region of physicalGapRegions(branch, sibling, regions)) {
+      addUniqueLine(region, line);
+      line.approachRegions.set(region.key, endpoint);
+    }
+  }
+}
+
 function hasAncestorOrSelf(object, ancestor) {
   for (let current = object; current; current = current.parent) if (current === ancestor) return true;
   return false;
@@ -211,6 +242,7 @@ export function reserveRoutingSpace(scene) {
   for (const line of scene.lines) {
     if (!line.from || !line.to || line.space === "overlay") continue;
     line.regionTracks = new Map();
+    line.approachRegions = new Map();
     const lca = leastCommonAncestor(line.from.object, line.to.object);
     const fromBranch = branchBelow(lca, line.from.object);
     const toBranch = branchBelow(lca, line.to.object);
@@ -261,6 +293,8 @@ export function reserveRoutingSpace(scene) {
       const toSide = exitSide(line.to, directionToward(lca, toBranch, fromBranch));
       nestedExitReservations(line.from.object, lca, fromSide, line, regions);
       nestedExitReservations(line.to.object, lca, toSide, line, regions);
+      endpointApproachReservations(line.from, lca, line, regions);
+      endpointApproachReservations(line.to, lca, line, regions);
     }
 
     for (const segment of line.segments) {

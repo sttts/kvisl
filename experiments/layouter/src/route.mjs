@@ -1,5 +1,6 @@
 import { minimumHeadRun, normalizedHeads } from "./heads.mjs";
 import { buildChannelMesh, regionGeometry } from "./mesh.mjs";
+import { rotateSide } from "./orientation.mjs";
 
 const CELL = 160;
 const SIDE_VECTOR = {
@@ -8,16 +9,9 @@ const SIDE_VECTOR = {
   bottom: { x: 0, y: 1 },
   left: { x: -1, y: 0 },
 };
-const SIDE_ORDER = ["top", "right", "bottom", "left"];
 
 function center(box) {
   return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
-}
-
-function rotateSide(side, degrees) {
-  if (side === "auto") return side;
-  const turns = ((degrees % 360) + 360) % 360 / 90;
-  return SIDE_ORDER[(SIDE_ORDER.indexOf(side) + turns) % 4];
 }
 
 function chooseSide(box, remote) {
@@ -842,6 +836,12 @@ function isDirectGapCrossing(line, region) {
   // member could cross the gap directly; otherwise its bundle topology would
   // disagree with the other members.
   if (line.share?.group) return false;
+  const joinedPort = [line.from, line.to].some((endpoint) => {
+    const port = endpoint?.port;
+    const mode = port?.sharing?.mode ?? "auto";
+    return port?.attachments.length > 1 && (mode === "merge" || mode === "auto");
+  });
+  if (joinedPort) return false;
   const explicitRegions = line.segments.filter((segment) => segment.region || segment.corridor);
   if (explicitRegions.length !== 1) return false;
   const fromBranch = branchBelow(region.owner, line.from?.object);
@@ -887,6 +887,16 @@ function orderedPins(line, start, end) {
   const groups = [];
   for (const track of tracks) {
     const explicitIndex = explicitIndexByRegion.get(track.region.key) ?? -1;
+    const approachEndpoint = line.approachRegions?.get(track.region.key);
+    if (approachEndpoint) {
+      const fromSide = approachEndpoint === line.from;
+      groups.push({
+        phase: fromSide ? 1 : 3,
+        rank: ancestorDistance(approachEndpoint.object, track.region.owner),
+        pins: longitudinalTrackPins(track, start, end).map((pin) => ({ ...pin, required: true })),
+      });
+      continue;
+    }
     if (explicitPadding.has(track.region)) {
       groups.push({
         phase: 2,
@@ -1072,7 +1082,7 @@ function routeLine(line, index, routeIndex) {
           const escape = escapePoint(pin.endpoint);
           const vector = SIDE_VECTOR[pin.endpoint.physicalSide];
           const x = vector.x > 0 ? Math.max(pin.x, escape.x) : vector.x < 0 ? Math.min(pin.x, escape.x) : pin.x;
-          pins.push({ x, y: clamp(cursor.y) });
+          pins.push({ x, y: clamp(cursor.y), required: pin.required });
         } else if (pin.crossing) {
           const fromSide = cursor.x === start.x && cursor.y === start.y ? line.from?.physicalSide : null;
           const toSide = nextTravel === end ? line.to?.physicalSide : null;
@@ -1082,11 +1092,14 @@ function routeLine(line, index, routeIndex) {
           // Move along the endpoint branch before entering the gap. Without
           // this point, two equal-length L candidates can choose a vertical
           // run inside a gap that is meant to be crossed once.
-          if (cursor.y !== y) pins.push({ x: cursor.x, y: clamp(y) });
-          pins.push({ x: pin.x, y: clamp(y) });
+          if (cursor.y !== y) pins.push({ x: cursor.x, y: clamp(y), required: pin.required });
+          pins.push({ x: pin.x, y: clamp(y), required: pin.required });
         } else {
           const nextY = nextTravel.soft && nextTravel.region && regionGeometry(nextTravel.region).axis === "vertical" ? cursor.y : nextTravel.y;
-          pins.push({ x: pin.x, y: clamp(cursor.y) }, { x: pin.x, y: clamp(nextY) });
+          pins.push(
+            { x: pin.x, y: clamp(cursor.y), required: pin.required },
+            { x: pin.x, y: clamp(nextY), required: pin.required },
+          );
         }
       } else {
         const clamp = (value) => Math.max(alongStart, Math.min(alongEnd, value));
@@ -1094,18 +1107,21 @@ function routeLine(line, index, routeIndex) {
           const escape = escapePoint(pin.endpoint);
           const vector = SIDE_VECTOR[pin.endpoint.physicalSide];
           const y = vector.y > 0 ? Math.max(pin.y, escape.y) : vector.y < 0 ? Math.min(pin.y, escape.y) : pin.y;
-          pins.push({ x: clamp(cursor.x), y });
+          pins.push({ x: clamp(cursor.x), y, required: pin.required });
         } else if (pin.crossing) {
           const fromSide = cursor.x === start.x && cursor.y === start.y ? line.from?.physicalSide : null;
           const toSide = nextTravel === end ? line.to?.physicalSide : null;
           const x = fromSide === "top" || fromSide === "bottom"
             ? cursor.x
             : toSide === "top" || toSide === "bottom" ? nextTravel.x : cursor.x;
-          if (cursor.x !== x) pins.push({ x: clamp(x), y: cursor.y });
-          pins.push({ x: clamp(x), y: pin.y });
+          if (cursor.x !== x) pins.push({ x: clamp(x), y: cursor.y, required: pin.required });
+          pins.push({ x: clamp(x), y: pin.y, required: pin.required });
         } else {
           const nextX = nextTravel.soft && nextTravel.region && regionGeometry(nextTravel.region).axis === "horizontal" ? cursor.x : nextTravel.x;
-          pins.push({ x: clamp(cursor.x), y: pin.y }, { x: clamp(nextX), y: pin.y });
+          pins.push(
+            { x: clamp(cursor.x), y: pin.y, required: pin.required },
+            { x: clamp(nextX), y: pin.y, required: pin.required },
+          );
         }
       }
       cursor = pins.at(-1);
@@ -1238,6 +1254,7 @@ function collapseJogs(line, index, routeIndex) {
 // the dock along its side instead — an off-center dock beats a staircase.
 // Named ports with several attachments keep their join identity untouched.
 function slideDocks(scene, index) {
+  let changed = false;
   const sideDocks = new Map();
   const register = (target, side, point) => {
     const key = `${target.path}:${side}`;
@@ -1287,8 +1304,10 @@ function slideDocks(scene, index) {
       escape[lateralAxis] = target;
       endpoint.point[lateralAxis] = target;
       line.route = simplifyKeepingPins(line, route);
+      changed = true;
     }
   }
+  return changed;
 }
 
 // Bounded aesthetics sweeps after every line is routed. The route index is
@@ -1754,8 +1773,13 @@ export function route(scene) {
     routeAll();
   }
   improveRoutes(scene, index);
-  slideDocks(scene, index);
-  improveRoutes(scene, index);
+  // Sliding a dock changes the endpoint geometry from which all soft corridor
+  // pins were derived. Rebuild routes after every bounded slide pass instead
+  // of leaving the old dock coordinate behind as a protected pin.
+  for (let pass = 0; pass < 2 && slideDocks(scene, index); pass += 1) {
+    routeAll();
+    improveRoutes(scene, index);
+  }
   for (const line of scene.lines) materializeSharedPins(line);
   placeAllLabels(scene, index);
   return scene;
