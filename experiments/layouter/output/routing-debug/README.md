@@ -10,7 +10,7 @@ Generated from the repository TSX fixtures. Complete channel-mesh cells are pain
 
 **Structural quality:** 0 layout contract violations · 0 object overlaps · 0 route–object intersections · 0 label–object overlaps · 0 label–label overlaps · 0 label–route overlaps · 0 unexpected shared runs · 2 crossings · 0 title crossings · 0 label–decor overlaps
 
-**Perception:** 1.23 bends/line (max 2) · detour ×1.04 · backtrack 0% · 45/31 x/y guides for 17 boxes · peer-size CV 0.11 · gap CV 0.25 · label offset 24.8px
+**Perception:** 1.31 bends/line (max 3) · detour ×1.04 · backtrack 0% · 45/31 x/y guides for 17 boxes · peer-size CV 0.11 · gap CV 0.25 · label offset 24.8px
 
 <table>
   <tr><th>Original</th><th>Prototype SVG</th></tr>
@@ -24,11 +24,11 @@ Generated from the repository TSX fixtures. Complete channel-mesh cells are pain
 
 ## coverage
 
-12 objects · 8 lines · 1525×972
+12 objects · 8 lines · 1664×561
 
-**Structural quality:** 0 layout contract violations · 0 object overlaps · 0 route–object intersections · 0 label–object overlaps · 0 label–label overlaps · 0 label–route overlaps · 0 unexpected shared runs · 3 crossings · 0 title crossings · 0 label–decor overlaps
+**Structural quality:** 0 layout contract violations · 0 object overlaps · 0 route–object intersections · 0 label–object overlaps · 0 label–label overlaps · 0 label–route overlaps · 0 unexpected shared runs · 1 crossings · 0 title crossings · 0 label–decor overlaps
 
-**Perception:** 2.88 bends/line (max 8) · detour ×1.57 · backtrack 1% · 15/15 x/y guides for 7 boxes · peer-size CV 0.00 · gap CV 0.06 · label offset 0.0px
+**Perception:** 1.75 bends/line (max 6) · detour ×1.13 · backtrack 3% · 15/12 x/y guides for 7 boxes · peer-size CV 0.00 · gap CV 0.06 · label offset 0.0px
 
 <p align="center"><img src="./coverage.svg" alt="Prototype coverage" width="90%"></p>
 
@@ -38,9 +38,9 @@ Generated from the repository TSX fixtures. Complete channel-mesh cells are pain
 
 20 objects · 13 lines · 1235×1036
 
-**Structural quality:** 0 layout contract violations · 0 object overlaps · 0 route–object intersections · 0 label–object overlaps · 0 label–label overlaps · 0 label–route overlaps · 0 unexpected shared runs · 4 crossings · 0 title crossings · 0 label–decor overlaps
+**Structural quality:** 0 layout contract violations · 0 object overlaps · 0 route–object intersections · 0 label–object overlaps · 0 label–label overlaps · 0 label–route overlaps · 0 unexpected shared runs · 2 crossings · 0 title crossings · 0 label–decor overlaps
 
-**Perception:** 2.00 bends/line (max 4) · detour ×1.03 · backtrack 1% · 26/26 x/y guides for 12 boxes · peer-size CV 0.06 · gap CV 0.28 · label offset 0.0px
+**Perception:** 1.69 bends/line (max 4) · detour ×1.00 · backtrack 0% · 26/26 x/y guides for 12 boxes · peer-size CV 0.06 · gap CV 0.28 · label offset 0.0px
 
 <table>
   <tr><th>Original</th><th>Prototype SVG</th></tr>
@@ -54,11 +54,11 @@ Generated from the repository TSX fixtures. Complete channel-mesh cells are pain
 
 ## modelplane-fleet-inference
 
-39 objects · 19 lines · 1687×1446
+39 objects · 19 lines · 1687×1470
 
-**Structural quality:** 0 layout contract violations · 0 object overlaps · 0 route–object intersections · 0 label–object overlaps · 0 label–label overlaps · 0 label–route overlaps · 0 unexpected shared runs · 4 crossings · 0 title crossings · 0 label–decor overlaps
+**Structural quality:** 0 layout contract violations · 0 object overlaps · 0 route–object intersections · 0 label–object overlaps · 0 label–label overlaps · 0 label–route overlaps · 0 unexpected shared runs · 1 crossings · 0 title crossings · 0 label–decor overlaps
 
-**Perception:** 2.26 bends/line (max 5) · detour ×1.24 · backtrack 6% · 47/32 x/y guides for 22 boxes · peer-size CV 0.08 · gap CV 0.18 · label offset 26.6px
+**Perception:** 1.58 bends/line (max 8) · detour ×1.07 · backtrack 3% · 47/32 x/y guides for 22 boxes · peer-size CV 0.08 · gap CV 0.30 · label offset 29.8px
 
 <table>
   <tr><th>Original</th><th>Prototype SVG</th></tr>
@@ -72,11 +72,11 @@ Generated from the repository TSX fixtures. Complete channel-mesh cells are pain
 
 ## uml-activity
 
-19 objects · 15 lines · 927×799
+19 objects · 15 lines · 999×799
 
-**Structural quality:** 0 layout contract violations · 0 object overlaps · 0 route–object intersections · 0 label–object overlaps · 0 label–label overlaps · 0 label–route overlaps · 0 unexpected shared runs · 7 crossings · 0 title crossings · 0 label–decor overlaps
+**Structural quality:** 0 layout contract violations · 0 object overlaps · 0 route–object intersections · 0 label–object overlaps · 0 label–label overlaps · 0 label–route overlaps · 0 unexpected shared runs · 4 crossings · 0 title crossings · 0 label–decor overlaps
 
-**Perception:** 2.47 bends/line (max 4) · detour ×1.05 · backtrack 2% · 16/33 x/y guides for 13 boxes · peer-size CV 0.17 · gap CV 0.30 · label offset 39.7px
+**Perception:** 1.20 bends/line (max 2) · detour ×1.00 · backtrack 0% · 16/35 x/y guides for 13 boxes · peer-size CV 0.17 · gap CV 0.34 · label offset 30.7px
 
 <p align="center"><img src="./uml-activity.svg" alt="Prototype uml-activity" width="90%"></p>
 
@@ -84,11 +84,11 @@ Generated from the repository TSX fixtures. Complete channel-mesh cells are pain
 
 ## uml-class
 
-13 objects · 8 lines · 1042×632
+13 objects · 8 lines · 1150×752
 
-**Structural quality:** 0 layout contract violations · 0 object overlaps · 0 route–object intersections · 0 label–object overlaps · 0 label–label overlaps · 0 label–route overlaps · 0 unexpected shared runs · 4 crossings · 0 title crossings · 0 label–decor overlaps
+**Structural quality:** 0 layout contract violations · 0 object overlaps · 0 route–object intersections · 0 label–object overlaps · 0 label–label overlaps · 0 label–route overlaps · 0 unexpected shared runs · 1 crossings · 0 title crossings · 0 label–decor overlaps
 
-**Perception:** 2.50 bends/line (max 4) · detour ×1.21 · backtrack 9% · 13/11 x/y guides for 9 boxes · peer-size CV 0.31 · gap CV 0.00 · label offset 53.8px
+**Perception:** 1.75 bends/line (max 4) · detour ×1.06 · backtrack 3% · 13/11 x/y guides for 9 boxes · peer-size CV 0.31 · gap CV 0.00 · label offset 20.2px
 
 <p align="center"><img src="./uml-class.svg" alt="Prototype uml-class" width="90%"></p>
 
@@ -100,7 +100,7 @@ Generated from the repository TSX fixtures. Complete channel-mesh cells are pain
 
 **Structural quality:** 0 layout contract violations · 0 object overlaps · 0 route–object intersections · 0 label–object overlaps · 0 label–label overlaps · 0 label–route overlaps · 0 unexpected shared runs · 1 crossings · 0 title crossings · 0 label–decor overlaps
 
-**Perception:** 2.50 bends/line (max 5) · detour ×1.26 · backtrack 10% · 14/6 x/y guides for 5 boxes · peer-size CV 0.07 · gap CV 0.09 · label offset 18.0px
+**Perception:** 1.75 bends/line (max 4) · detour ×1.13 · backtrack 6% · 14/6 x/y guides for 5 boxes · peer-size CV 0.07 · gap CV 0.09 · label offset 18.0px
 
 <p align="center"><img src="./uml-component.svg" alt="Prototype uml-component" width="90%"></p>
 
@@ -108,11 +108,11 @@ Generated from the repository TSX fixtures. Complete channel-mesh cells are pain
 
 ## uml-deployment
 
-13 objects · 4 lines · 945×663
+13 objects · 4 lines · 945×724
 
-**Structural quality:** 0 layout contract violations · 0 object overlaps · 0 route–object intersections · 0 label–object overlaps · 0 label–label overlaps · 0 label–route overlaps · 0 unexpected shared runs · 1 crossings · 0 title crossings · 0 label–decor overlaps
+**Structural quality:** 0 layout contract violations · 0 object overlaps · 0 route–object intersections · 0 label–object overlaps · 0 label–label overlaps · 0 label–route overlaps · 0 unexpected shared runs · 0 crossings · 0 title crossings · 0 label–decor overlaps
 
-**Perception:** 4.00 bends/line (max 8) · detour ×1.43 · backtrack 15% · 9/12 x/y guides for 5 boxes · peer-size CV 0.09 · gap CV 0.00 · label offset 33.5px
+**Perception:** 3.50 bends/line (max 8) · detour ×1.30 · backtrack 12% · 9/12 x/y guides for 5 boxes · peer-size CV 0.09 · gap CV 0.00 · label offset 20.9px
 
 <p align="center"><img src="./uml-deployment.svg" alt="Prototype uml-deployment" width="90%"></p>
 
@@ -120,11 +120,11 @@ Generated from the repository TSX fixtures. Complete channel-mesh cells are pain
 
 ## uml-object
 
-7 objects · 3 lines · 1287×270
+7 objects · 3 lines · 1479×270
 
 **Structural quality:** 0 layout contract violations · 0 object overlaps · 0 route–object intersections · 0 label–object overlaps · 0 label–label overlaps · 0 label–route overlaps · 0 unexpected shared runs · 0 crossings · 0 title crossings · 0 label–decor overlaps
 
-**Perception:** 1.33 bends/line (max 4) · detour ×1.26 · backtrack 0% · 12/3 x/y guides for 4 boxes · peer-size CV 0.00 · gap CV 0.09 · label offset 80.3px
+**Perception:** 1.33 bends/line (max 4) · detour ×1.17 · backtrack 0% · 12/3 x/y guides for 4 boxes · peer-size CV 0.00 · gap CV 0.05 · label offset 18.0px
 
 <p align="center"><img src="./uml-object.svg" alt="Prototype uml-object" width="90%"></p>
 
@@ -136,7 +136,7 @@ Generated from the repository TSX fixtures. Complete channel-mesh cells are pain
 
 **Structural quality:** 0 layout contract violations · 0 object overlaps · 0 route–object intersections · 0 label–object overlaps · 0 label–label overlaps · 0 label–route overlaps · 0 unexpected shared runs · 0 crossings · 0 title crossings · 0 label–decor overlaps
 
-**Perception:** 1.75 bends/line (max 3) · detour ×1.06 · backtrack 3% · 10/9 x/y guides for 5 boxes · peer-size CV 0.00 · gap CV 0.00 · label offset 25.5px
+**Perception:** 0.50 bends/line (max 2) · detour ×1.00 · backtrack 0% · 10/9 x/y guides for 5 boxes · peer-size CV 0.00 · gap CV 0.00 · label offset 23.9px
 
 <p align="center"><img src="./uml-package.svg" alt="Prototype uml-package" width="90%"></p>
 
@@ -146,9 +146,9 @@ Generated from the repository TSX fixtures. Complete channel-mesh cells are pain
 
 36 objects · 12 lines · 1609×1000
 
-**Structural quality:** 0 layout contract violations · 0 object overlaps · 0 route–object intersections · 0 label–object overlaps · 0 label–label overlaps · 0 label–route overlaps · 0 unexpected shared runs · 6 crossings · 0 title crossings · 0 label–decor overlaps
+**Structural quality:** 0 layout contract violations · 0 object overlaps · 0 route–object intersections · 0 label–object overlaps · 0 label–label overlaps · 0 label–route overlaps · 0 unexpected shared runs · 4 crossings · 0 title crossings · 0 label–decor overlaps
 
-**Perception:** 1.33 bends/line (max 6) · detour ×1.20 · backtrack 0% · 23/33 x/y guides for 27 boxes · peer-size CV 0.66 · gap CV 0.70 · label offset 18.8px
+**Perception:** 0.00 bends/line (max 0) · detour ×1.00 · backtrack 0% · 20/12 x/y guides for 7 boxes · peer-size CV 0.66 · gap CV 0.69 · label offset 18.0px
 
 <p align="center"><img src="./uml-sequence.svg" alt="Prototype uml-sequence" width="90%"></p>
 
@@ -156,11 +156,11 @@ Generated from the repository TSX fixtures. Complete channel-mesh cells are pain
 
 ## uml-state-machine
 
-14 objects · 11 lines · 1134×876
+17 objects · 11 lines · 1144×1018
 
-**Structural quality:** 0 layout contract violations · 0 object overlaps · 0 route–object intersections · 0 label–object overlaps · 0 label–label overlaps · 0 label–route overlaps · 0 unexpected shared runs · 2 crossings · 0 title crossings · 0 label–decor overlaps
+**Structural quality:** 0 layout contract violations · 0 object overlaps · 0 route–object intersections · 0 label–object overlaps · 0 label–label overlaps · 0 label–route overlaps · 0 unexpected shared runs · 0 crossings · 0 title crossings · 0 label–decor overlaps
 
-**Perception:** 1.73 bends/line (max 3) · detour ×1.04 · backtrack 2% · 11/23 x/y guides for 10 boxes · peer-size CV 0.39 · gap CV 0.00 · label offset 38.1px
+**Perception:** 1.73 bends/line (max 4) · detour ×1.06 · backtrack 0% · 23/22 x/y guides for 10 boxes · peer-size CV 0.26 · gap CV 0.03 · label offset 44.1px
 
 <p align="center"><img src="./uml-state-machine.svg" alt="Prototype uml-state-machine" width="90%"></p>
 
@@ -168,11 +168,11 @@ Generated from the repository TSX fixtures. Complete channel-mesh cells are pain
 
 ## uml-use-case
 
-17 objects · 9 lines · 978×459
+17 objects · 9 lines · 1053×711
 
-**Structural quality:** 0 layout contract violations · 0 object overlaps · 0 route–object intersections · 0 label–object overlaps · 0 label–label overlaps · 0 label–route overlaps · 0 unexpected shared runs · 1 crossings · 0 title crossings · 0 label–decor overlaps
+**Structural quality:** 0 layout contract violations · 0 object overlaps · 0 route–object intersections · 0 label–object overlaps · 0 label–label overlaps · 0 label–route overlaps · 0 unexpected shared runs · 0 crossings · 0 title crossings · 0 label–decor overlaps
 
-**Perception:** 1.44 bends/line (max 4) · detour ×1.10 · backtrack 5% · 16/9 x/y guides for 10 boxes · peer-size CV 0.05 · gap CV 0.00 · label offset 137.1px
+**Perception:** 1.11 bends/line (max 2) · detour ×1.00 · backtrack 0% · 16/17 x/y guides for 10 boxes · peer-size CV 0.06 · gap CV 0.00 · label offset 27.4px
 
 <p align="center"><img src="./uml-use-case.svg" alt="Prototype uml-use-case" width="90%"></p>
 
@@ -184,7 +184,7 @@ Generated from the repository TSX fixtures. Complete channel-mesh cells are pain
 
 **Structural quality:** 0 layout contract violations · 0 object overlaps · 0 route–object intersections · 0 label–object overlaps · 0 label–label overlaps · 0 label–route overlaps · 0 unexpected shared runs · 5 crossings · 0 title crossings · 0 label–decor overlaps
 
-**Perception:** 1.70 bends/line (max 5) · detour ×1.17 · backtrack 7% · 20/31 x/y guides for 13 boxes · peer-size CV 0.20 · gap CV 0.05 · label offset 47.5px
+**Perception:** 1.30 bends/line (max 4) · detour ×1.11 · backtrack 5% · 20/31 x/y guides for 13 boxes · peer-size CV 0.20 · gap CV 0.05 · label offset 67.1px
 
 <table>
   <tr><th>Original</th><th>Prototype SVG</th></tr>

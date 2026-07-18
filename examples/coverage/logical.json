@@ -269,6 +269,7 @@
       "roles": [],
       "classes": [],
       "orientation": 90,
+      "orientationDepth": 2,
       "content": [],
       "children": [
         14

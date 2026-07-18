@@ -2,13 +2,13 @@
 // deliberately exercise distinct line-owned docks.
 
 import { Diagram, Row, Title } from "@kvisl/core";
-import { UmlAssociation, UmlEnd, UmlObject, UmlRelation } from "./uml";
+import { UmlAssociation, UmlEnd, UmlObject, UmlRelation, umlStyles } from "./uml";
 
 export default (
-  <Diagram id="uml-object-example" theme="uml">
+  <Diagram id="uml-object-example" theme="uml" styles={umlStyles}>
     <Title>One placed order — object diagram</Title>
 
-    <Row id="instances" gap="large" order="prefer-source">
+    <Row id="instances" gap={96} order="prefer-source">
       <UmlObject
         id="alice"
         name="alice"

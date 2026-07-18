@@ -64,6 +64,7 @@ export const umlStyles = [
   rule(role("uml-reply"), { dash: "dashed" }),
   rule(role("uml-lifeline-spine"), { dash: "dashed" }),
   rule(role("uml-activation"), { fill: "near-white" }),
+  rule(role("uml-combined-fragment"), { fill: "transparent", stroke: "ink", strokeWidth: 2 }),
 ];
 
 function featureText(feature: UmlFeature) {
@@ -565,6 +566,7 @@ export function Interaction({
           id={f.id}
           role="uml-combined-fragment"
           label={f.guard ? `${f.operator} [${f.guard}]` : f.operator}
+          shape="rectangle"
         />,
         <Constraint
           key={`${f.id}-frame`}

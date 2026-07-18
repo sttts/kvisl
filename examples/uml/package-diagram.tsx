@@ -2,10 +2,10 @@
 // containment without flattening package identity.
 
 import { Diagram, Grid, Title } from "@kvisl/core";
-import { UmlClass, UmlPackage, UmlRelation } from "./uml";
+import { UmlClass, UmlPackage, UmlRelation, umlStyles } from "./uml";
 
 export default (
-  <Diagram id="uml-package-example" theme="uml">
+  <Diagram id="uml-package-example" theme="uml" styles={umlStyles}>
     <Title>Commerce modules — package diagram</Title>
 
     <Grid id="packages" columns={2} gap="large" order="prefer-source">

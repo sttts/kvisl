@@ -3,7 +3,7 @@
 // share one hollow-triangle trunk; ref() composition keeps deep paths short.
 
 import { Diagram, Grid, Port, Title, ref } from "@kvisl/core";
-import { UmlAssociation, UmlClass, UmlEnd, UmlPackage, UmlRelation } from "./uml";
+import { UmlAssociation, UmlClass, UmlEnd, UmlPackage, UmlRelation, umlStyles } from "./uml";
 
 const customer = ref("model/customer");
 const order = ref("model/order");
@@ -11,11 +11,11 @@ const lineItem = ref("model/line-item");
 const paymentMethod = ref("model/payment-method");
 
 export default (
-  <Diagram id="uml-class-example" theme="uml">
+  <Diagram id="uml-class-example" theme="uml" styles={umlStyles}>
     <Title>Order domain — class diagram</Title>
 
     <UmlPackage id="sales" name="sales">
-      <Grid id="model" columns={3} gap="large" order="prefer-source">
+      <Grid id="model" columns={3} gap={96} order="prefer-source">
         <UmlClass
           id="customer"
           name="Customer"
@@ -45,8 +45,8 @@ export default (
           ]}
           ports={[
             { id: "customer", side: "left" },
-            { id: "items", side: "bottom" },
-            { id: "payment", side: "right" },
+            { id: "items", side: "right" },
+            { id: "payment", side: "bottom" },
           ]}
         />
 
@@ -57,7 +57,7 @@ export default (
             { visibility: "-", text: "quantity: int" },
             { visibility: "-", text: "unitPrice: Money" },
           ]}
-          ports={[{ id: "order", side: "top" }]}
+          ports={[{ id: "order", side: "left" }]}
         />
 
         <UmlClass id="payment-method" name="PaymentMethod" abstract />

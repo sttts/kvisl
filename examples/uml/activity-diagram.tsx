@@ -1,11 +1,11 @@
 // Pre-implementation UML grammar example. Activity partitions are scopes and
 // control flows cross them with inferred hierarchy traversal.
 
-import { Diagram, Grid, Title } from "@kvisl/core";
-import { UmlAction, UmlActivityPartition, UmlPseudostate, UmlRelation } from "./uml";
+import { Constraint, Diagram, Grid, Title } from "@kvisl/core";
+import { UmlAction, UmlActivityPartition, UmlPseudostate, UmlRelation, umlStyles } from "./uml";
 
 export default (
-  <Diagram id="uml-activity-example" theme="uml">
+  <Diagram id="uml-activity-example" theme="uml" styles={umlStyles}>
     <Title>Fulfil an order — activity diagram</Title>
 
     <Grid id="partitions" columns={3} gap="large" order="fixed">
@@ -31,6 +31,13 @@ export default (
         <UmlAction id="prepare" name="Prepare shipment" />
       </UmlActivityPartition>
     </Grid>
+
+    <Constraint
+      id="equal-partition-heights"
+      kind="same-size"
+      dimension="height"
+      members={["partitions/customer", "partitions/checkout", "partitions/fulfillment"]}
+    />
 
     <UmlRelation id="start-submit" kind="transition" from="partitions/customer/start" to="partitions/customer/submit" />
     <UmlRelation id="submit-validate" kind="transition" from="partitions/customer/submit" to="partitions/checkout/validate" />

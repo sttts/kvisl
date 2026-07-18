@@ -55,10 +55,10 @@ function Pipeline({ id }: { id: string }) {
 export default (
   <Diagram id="grammar-coverage" theme="excalidraw-handdrawn" styles={[palette, ...styles]}>
     <Row id="system" gap="xlarge" align="center">
-      {/* the same component: once upright, once rotated — every local
-          direction inside re-resolves, text stays physically upright */}
+      {/* the same component: once horizontal, once with two layout/frame
+          levels re-oriented; child boxes and text remain upright */}
       <Pipeline id="upright" />
-      <Scope id="rotated" orientation={90} layout={{ kind: "column" }}>
+      <Scope id="rotated" orientation={{ degrees: 90, depth: 2 }} layout={{ kind: "column" }}>
         <Pipeline id="pipeline" />
       </Scope>
 

@@ -3,10 +3,10 @@
 // and fragment frames from the messages; the core never models time.
 
 import { Diagram, Title } from "@kvisl/core";
-import { Interaction, Lifeline, Loop, Message, Reply } from "./uml";
+import { Interaction, Lifeline, Loop, Message, Reply, umlStyles } from "./uml";
 
 export default (
-  <Diagram id="uml-sequence-example" theme="uml">
+  <Diagram id="uml-sequence-example" theme="uml" styles={umlStyles}>
     <Title>Place an order — sequence diagram</Title>
 
     <Interaction id="checkout-flow">

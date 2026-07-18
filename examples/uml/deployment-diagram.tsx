@@ -2,10 +2,10 @@
 // containment independently of communication paths.
 
 import { Diagram, Port, Row, Title } from "@kvisl/core";
-import { UmlArtifact, UmlComponent, UmlDeploymentNode, UmlRelation } from "./uml";
+import { UmlArtifact, UmlComponent, UmlDeploymentNode, UmlRelation, umlStyles } from "./uml";
 
 export default (
-  <Diagram id="uml-deployment-example" theme="uml">
+  <Diagram id="uml-deployment-example" theme="uml" styles={umlStyles}>
     <Title>Production checkout — deployment diagram</Title>
 
     <Row id="topology" gap="large" order="prefer-source">

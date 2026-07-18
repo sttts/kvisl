@@ -2,13 +2,13 @@
 // TSX components exposing named ports.
 
 import { Diagram, Row, Scope, Title } from "@kvisl/core";
-import { UmlComponent, UmlRelation } from "./uml";
+import { UmlComponent, UmlRelation, umlStyles } from "./uml";
 
 const provided = { kind: "extension", namespace: "uml", name: "provided-interface" } as const;
 const required = { kind: "extension", namespace: "uml", name: "required-interface" } as const;
 
 export default (
-  <Diagram id="uml-component-example" theme="uml">
+  <Diagram id="uml-component-example" theme="uml" styles={umlStyles}>
     <Title>Checkout service — component diagram</Title>
 
     <Scope id="checkout-system" role="uml-component-boundary" label="Checkout System">

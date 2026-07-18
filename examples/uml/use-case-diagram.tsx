@@ -2,10 +2,10 @@
 // ordinary components; include and extend are styled dependencies.
 
 import { Column, Diagram, Grid, Scope, Title } from "@kvisl/core";
-import { UmlActor, UmlRelation, UmlUseCase } from "./uml";
+import { UmlActor, UmlRelation, UmlUseCase, umlStyles } from "./uml";
 
 export default (
-  <Diagram id="uml-use-case-example" theme="uml">
+  <Diagram id="uml-use-case-example" theme="uml" styles={umlStyles}>
     <Title>Online store — use-case diagram</Title>
 
     <Grid id="scene" columns={3} gap="large" order="fixed">
@@ -15,10 +15,10 @@ export default (
       </Column>
 
       <Scope id="store" role="uml-system-boundary" label="Online Store">
-        <Grid id="cases" columns={2} gap="large">
+        <Grid id="cases" columns={2} gap={160}>
           <UmlUseCase id="browse" name="Browse catalog" />
-          <UmlUseCase id="checkout" name="Checkout" />
           <UmlUseCase id="authenticate" name="Authenticate customer" />
+          <UmlUseCase id="checkout" name="Checkout" />
           <UmlUseCase id="pay" name="Process payment" />
           <UmlUseCase id="refund" name="Refund order" />
           <UmlUseCase id="notify" name="Send notification" />
