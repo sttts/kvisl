@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
+import { boundaryLabelStrips } from "../src/mesh.mjs";
 import { solveFile } from "../src/pipeline.mjs";
-import { boundaryLabelStrips } from "../src/route.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.dirname(path.dirname(path.dirname(here)));

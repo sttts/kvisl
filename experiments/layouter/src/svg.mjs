@@ -218,11 +218,11 @@ function drawDividers(scene) {
 
 function drawRoutingRegions(scene) {
   return (scene.channelMesh ?? [])
-    .filter((cell) => cell.geometry?.width > 1 && cell.geometry?.height > 1)
+    .filter((cell) => cell.geometry?.width > 2 && cell.geometry?.height > 2)
     .map((cell) => {
       const geometry = cell.geometry;
       const authored = cell.corridors?.length ? "true" : "false";
-      return `<rect data-routing-region="${escape(cell.key)}" data-region-kind="${escape(cell.kind)}" data-materialized="${cell.materialized ? "true" : "false"}" data-authored="${authored}" x="${geometry.x + 0.5}" y="${geometry.y + 0.5}" width="${geometry.width - 1}" height="${geometry.height - 1}" fill="#ef4444" fill-opacity="0.1"/>`;
+      return `<rect data-routing-region="${escape(cell.key)}" data-region-kind="${escape(cell.kind)}" data-materialized="${cell.materialized ? "true" : "false"}" data-authored="${authored}" x="${geometry.x + 1}" y="${geometry.y + 1}" width="${geometry.width - 2}" height="${geometry.height - 2}" fill="#ef4444" fill-opacity="0.1"/>`;
     })
     .join("");
 }

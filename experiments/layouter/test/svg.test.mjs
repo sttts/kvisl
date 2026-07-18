@@ -77,5 +77,5 @@ test("routing debug paints channel-mesh cells as inset ten-percent red rectangle
   assert.doesNotMatch(regular, /id="routing-regions"/);
   assert.match(debug, /id="routing-regions"/);
   assert.equal((debug.match(/fill="#ef4444" fill-opacity="0\.1"/g) ?? []).length, 2);
-  assert.match(debug, /data-routing-region="mesh:gap:system:0" data-region-kind="gap" data-materialized="true" data-authored="true" x="140\.5" y="32\.5" width="23" height="111"/);
+  assert.match(debug, /data-routing-region="mesh:gap:system:0" data-region-kind="gap" data-materialized="true" data-authored="true" x="141" y="33" width="22" height="110"/);
 });

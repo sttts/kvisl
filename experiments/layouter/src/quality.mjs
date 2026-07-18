@@ -1,5 +1,6 @@
 import { effectiveLayout, lineLabelDemand } from "./layout.mjs";
-import { boundaryLabelStrips, containerBorderRings, labelMayCrossContainerBorder } from "./route.mjs";
+import { boundaryLabelStrips } from "./mesh.mjs";
+import { containerBorderRings, labelMayCrossContainerBorder } from "./route.mjs";
 
 const CELL = 160;
 

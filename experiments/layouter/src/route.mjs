@@ -1,5 +1,5 @@
 import { minimumHeadRun, normalizedHeads } from "./heads.mjs";
-import { buildChannelMesh, regionGeometry } from "./mesh.mjs";
+import { boundaryLabelStrips, buildChannelMesh, regionGeometry } from "./mesh.mjs";
 
 const CELL = 160;
 const SIDE_VECTOR = {
@@ -1510,33 +1510,6 @@ function placeAllLabels(scene, objectIndex) {
     }
   }
   scene.labelIndex = labelIndex;
-}
-
-// the top-left strip a container's boundary label occupies; routes and line
-// labels treat it as an obstacle so titles stay readable
-export function boundaryLabelStrips(scene) {
-  return scene.objects
-    .filter((object) => object.visible && object.children.length > 0 && object.label)
-    .map((object) => {
-      // the title may be wrapped: the strip covers the widest rendered line
-      // across all title rows
-      const titleLines = object.renderLines?.filter((line) => !line.divider && line.role === "label") ?? [];
-      const longest = titleLines.length ? Math.max(...titleLines.map((line) => line.text.length)) : String(object.label).length;
-      return {
-        kind: "boundary-label",
-        visible: true,
-        children: [],
-        roles: [],
-        classes: [],
-        owner: object,
-        box: {
-          x: object.box.x + 8,
-          y: object.box.y + 4,
-          width: Math.max(0, Math.min(object.box.width - 16, longest * (object.fontSize ?? 15) * 0.62 + 16)),
-          height: Math.max(1, titleLines.length) * (object.fontSize ?? 15) * 1.6,
-        },
-      };
-    });
 }
 
 // thin strips along a drawn container boundary; a line label sitting on a

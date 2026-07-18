@@ -116,3 +116,17 @@ The repository examples are a regression gate: every example must render, remain
 Row and column members, and grid cells, equalize their cross-axis sizes by default — the `align-items: stretch` analog — and peers with the same kind/shape/role signature quantize onto shared widths and heights. Both apply only within a near-miss tolerance (stretch: 1.5× + 40 units; quantization: 28 units or 28 % group spread) so a small member is never inflated to several times its size. An explicit `same-size` constraint equalizes without a cap. Objects sized by an `extent` constraint are exempt.
 
 Rationale: hand-drawn references equalize sibling boxes pervasively, and requiring an annotation for every equality would contradict the implicit-first model. Harmonization is expressed as monotone size floors, so it can only widen reservations, never shrink them.
+
+## D16. Boundary labels are local channel residents
+
+A container title contributes to the container's intrinsic content size, but it does not translate the complete top-channel mesh. The mesh subtracts the measured title rectangle from the one top-padding region and connects the remaining parts only across positive-length shared edges.
+
+Derived gap cells similarly use only the facing overlap of adjacent siblings. Any larger approach rectangle retained by the current router is provenance, not one free-space cell.
+
+Rationale: a left-aligned title blocks routing locally. Treating its height as a global channel offset wastes the full width, while painting a bounding-union gap incorrectly marks space behind an uneven sibling as routeable.
+
+## D17. Each side has one padding region
+
+Every container padding mesh has exactly one boundary-reaching region per side. Track allocation, free capacity, clearance, and transitions are properties of that region; they are not additional parallel regions. Each corner uses the full width and height of its two neighboring side bands.
+
+Rationale: painting base padding and a reserved track as two cells invents a second padding corridor. A single region preserves the logical topology while still retaining the narrower solved track as internal routing geometry.

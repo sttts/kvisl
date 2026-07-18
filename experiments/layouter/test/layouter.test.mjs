@@ -6,10 +6,11 @@ import { performance } from "node:perf_hooks";
 import { test } from "node:test";
 import { layout } from "../src/layout.mjs";
 import { minimumHeadRun, normalizedHeads } from "../src/heads.mjs";
+import { boundaryLabelStrips } from "../src/mesh.mjs";
 import { solveFile } from "../src/pipeline.mjs";
 import { project } from "../src/project.mjs";
 import { analyzeScene } from "../src/quality.mjs";
-import { boundaryLabelStrips, route } from "../src/route.mjs";
+import { route } from "../src/route.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.dirname(path.dirname(path.dirname(here)));
@@ -116,11 +117,64 @@ test("the solved channel mesh includes unused padding sides, sibling gaps, and c
   const { scene } = await solveFile(entry);
   const keys = new Set(scene.channelMesh.map((cell) => cell.key));
   assert.ok(keys.has("mesh:padding:cluster:bottom"));
-  assert.ok(keys.has("mesh:corner:cluster:top-left"));
+  assert.ok([...keys].some((key) => key.startsWith("mesh:corner:cluster:top-left")));
   assert.ok(keys.has("mesh:corner:cluster:bottom-right"));
-  assert.deepEqual(scene.channelMesh.find((cell) => cell.key === "mesh:corner:cluster:top-left").outwardSides, ["top", "left"]);
+  assert.deepEqual(scene.channelMesh.find((cell) => cell.key.startsWith("mesh:corner:cluster:top-left")).outwardSides, ["top", "left"]);
   assert.ok(keys.has("mesh:grid-column-gap:cluster/layers:0"));
   assert.ok(scene.channelMesh.some((cell) => cell.kind === "gap" && !cell.materialized));
+});
+
+test("boundary titles partition only their local top-channel cells", async () => {
+  const entry = path.join(repo, "examples", "agent-substrate", "diagram.tsx");
+  const { scene } = await solveFile(entry);
+  const cluster = scene.objectByPath.get("cluster");
+  const title = scene.channelResidents.find((resident) => resident.owner === cluster);
+  const cells = scene.channelMesh.filter((cell) => cell.owner === cluster);
+  const overlaps = (first, second) => first.x < second.x + second.width
+    && first.x + first.width > second.x
+    && first.y < second.y + second.height
+    && first.y + first.height > second.y;
+
+  assert.ok(title);
+  assert.ok(cells.every((cell) => !overlaps(cell.geometry, title.box)));
+  const upperRight = cells.find((cell) => cell.side === "top" && cell.geometry.y === cluster.box.y
+    && cell.geometry.x + cell.geometry.width > title.box.x + title.box.width);
+  assert.equal(upperRight.geometry.y, cluster.box.y, "the title must not push the entire top channel down");
+});
+
+test("each side has one boundary-reaching padding band whose corners use the same dimensions", async () => {
+  const entry = path.join(repo, "examples", "agent-substrate", "diagram.tsx");
+  const { scene } = await solveFile(entry);
+  const runtime = scene.objectByPath.get("cluster/layers/runtime");
+  const cells = new Map(scene.channelMesh.filter((cell) => cell.owner === runtime).map((cell) => [cell.key, cell]));
+  const left = cells.get("mesh:padding:cluster/layers/runtime:left");
+  const right = cells.get("mesh:padding:cluster/layers/runtime:right");
+  assert.equal(left.geometry.x, runtime.box.x);
+  assert.equal(right.geometry.x + right.geometry.width, runtime.box.x + runtime.box.width);
+  assert.ok(![...cells.keys()].some((key) => key.includes("left-access") || key.includes("right-access")));
+
+  for (const [vertical, horizontal] of [["top", "right"], ["bottom", "left"], ["bottom", "right"]]) {
+    const corner = cells.get(`mesh:corner:cluster/layers/runtime:${vertical}-${horizontal}`);
+    const horizontalBand = cells.get(`mesh:padding:cluster/layers/runtime:${horizontal}`);
+    const verticalHeight = vertical === "top"
+      ? runtime.contentHeight + runtime.paddingBox.top
+      : runtime.paddingBox.bottom;
+    assert.equal(corner.geometry.height, verticalHeight);
+    assert.equal(corner.geometry.width, horizontalBand.geometry.width);
+  }
+});
+
+test("derived gap cells use facing overlap while active routing keeps its larger approach geometry", async () => {
+  const entry = path.join(repo, "examples", "agent-substrate", "diagram.tsx");
+  const { scene } = await solveFile(entry);
+  const gap = scene.channelMesh.find((cell) =>
+    cell.key === "mesh:gap:cluster/layers/control-and-storage/substrate-control:0");
+  assert.ok(gap.materialized);
+  assert.ok(gap.geometry.x > gap.routingGeometry.x);
+  assert.ok(gap.geometry.x + gap.geometry.width < gap.routingGeometry.x + gap.routingGeometry.width);
+  const access = scene.channelMesh.filter((cell) => cell.key.startsWith(`${gap.key}:access-`));
+  assert.equal(access.length, 2);
+  assert.ok(gap.neighbors.some((key) => key.startsWith(`${gap.key}:access-`)));
 });
 
 test("solving the same diagram is deterministic", async () => {
