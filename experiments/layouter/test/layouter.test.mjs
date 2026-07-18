@@ -117,6 +117,33 @@ test("an automatic dock follows the nearest explicit ancestor padding", async ()
   assert.equal(line.to.point.y, line.to.object.box.y);
 });
 
+test("single-attachment docks stay centered when no local constraint requires displacement", async () => {
+  const entry = path.join(repo, "examples", "agent-substrate", "diagram.tsx");
+  const { scene } = await solveFile(entry);
+  const midpoint = (endpoint) => {
+    const target = endpoint.port?.anchor ?? endpoint.port?.owner ?? endpoint.object;
+    const horizontalSide = endpoint.physicalSide === "top" || endpoint.physicalSide === "bottom";
+    return horizontalSide
+      ? target.box.x + target.box.width / 2
+      : target.box.y + target.box.height / 2;
+  };
+  const lateralPosition = (endpoint) => endpoint.physicalSide === "top" || endpoint.physicalSide === "bottom"
+    ? endpoint.point.x
+    : endpoint.point.y;
+  const stateLine = scene.lines.find((line) => line.from?.port?.id === "state");
+  const sandboxLine = scene.lines.find((line) => line.from?.port?.id === "sandbox");
+  const controllerLine = scene.lines.find((line) => line.id === "worker-pool-controller");
+  const endpoints = [
+    stateLine.from,
+    stateLine.to,
+    sandboxLine.from,
+    sandboxLine.to,
+    controllerLine.from,
+    controllerLine.to,
+  ];
+  for (const endpoint of endpoints) assert.equal(lateralPosition(endpoint), midpoint(endpoint));
+});
+
 test("nested padding pins are ordered by their regions instead of provisional midpoints", async () => {
   const entry = path.join(repo, "examples", "agent-substrate", "diagram.tsx");
   const { scene } = await solveFile(entry);
@@ -184,6 +211,63 @@ test("nested explicit segment regions remain monotone from source to target", as
   const firstVertical = line.route.slice(1).map((point, index) => ({ first: line.route[index], second: point }))
     .find((segment) => segment.first.x === segment.second.x && segment.first.y !== segment.second.y);
   assert.ok(firstVertical.first.x >= outerGap.geometry.x && firstVertical.first.x <= outerGap.geometry.x + outerGap.geometry.width);
+});
+
+test("perpendicular crossings do not displace a longitudinal corridor track from center", async () => {
+  const entry = path.join(repo, "examples", "agent-substrate", "diagram.tsx");
+  const { scene } = await solveFile(entry);
+  const region = scene.regions.get("gap:cluster/layers:1");
+  const selfSuspend = scene.lines.find((line) => line.id === "self-suspend");
+  const checkpoint = scene.lines.find((line) => line.id === "checkpoint-transfer");
+  const resume = scene.lines.find((line) => line.id === "resume-actor");
+  const selfTrack = selfSuspend.regionTracks.get(region.key);
+  assert.equal(selfTrack.crossing, false);
+  assert.equal(selfTrack.total, 1);
+  assert.equal(checkpoint.regionTracks.get(region.key).crossing, true);
+  assert.equal(resume.regionTracks.get(region.key).crossing, true);
+  const center = region.geometry.x + region.geometry.width / 2;
+  const longitudinal = selfSuspend.route.slice(1)
+    .map((point, index) => ({ first: selfSuspend.route[index], second: point }))
+    .filter(({ first, second }) => first.x === second.x && first.y !== second.y)
+    .find(({ first }) => first.x >= region.geometry.x && first.x <= region.geometry.x + region.geometry.width);
+  assert.equal(longitudinal.first.x, center);
+});
+
+test("a sole explicit gap crossing does not create an avoidable longitudinal detour", async () => {
+  const entry = path.join(repo, "examples", "agent-substrate", "diagram.tsx");
+  const { scene } = await solveFile(entry);
+  const line = scene.lines.find((candidate) => candidate.id === "checkpoint-transfer");
+  const runtime = scene.objectByPath.get("cluster/layers/runtime");
+  const gap = scene.regions.get("gap:cluster/layers:1");
+  const runtimeLeft = [...scene.regions.values()].find((region) =>
+    region.kind === "padding" && region.owner === runtime && region.side === "left");
+  const runtimeBottom = [...scene.regions.values()].find((region) =>
+    region.kind === "padding" && region.owner === runtime && region.side === "bottom" && region.entryLines.has(line));
+  const routeLength = line.route.slice(1).reduce((sum, point, index) =>
+    sum + Math.abs(point.x - line.route[index].x) + Math.abs(point.y - line.route[index].y), 0);
+  const directLength = Math.abs(line.route[0].x - line.route.at(-1).x)
+    + Math.abs(line.route[0].y - line.route.at(-1).y);
+  assert.ok(runtimeLeft?.entryLines.has(line));
+  assert.equal(runtimeBottom, undefined);
+  assert.equal(line.regionTracks.get(gap.key).crossing, true);
+  assert.equal(routeLength, directLength);
+});
+
+test("longitudinal corridor tracks form a centered geometry-ordered bundle", async () => {
+  const entry = path.join(repo, "examples", "coverage", "diagram.tsx");
+  const { scene } = await solveFile(entry);
+  const region = scene.regions.get("gap:system:1");
+  const entries = region.entries
+    .map((entry) => ({ entry, track: entry.line.regionTracks.get(region.key) }))
+    .filter(({ track }) => !track.crossing)
+    .sort((first, second) => first.track.index - second.track.index);
+  assert.deepEqual(entries.map(({ entry }) => entry.line.id), ["probe-upright", "audit-upright", "audit-rotated"]);
+  const projected = entries.map(({ entry }) => (entry.line.from.point.x + entry.line.to.point.x) / 2);
+  assert.deepEqual(projected, [...projected].sort((first, second) => first - second));
+  const coordinates = entries.map(({ track }) =>
+    region.geometry.x + region.geometry.width / 2
+      + (track.index - (track.total - 1) / 2) * region.spacing);
+  assert.equal((coordinates[0] + coordinates.at(-1)) / 2, region.geometry.x + region.geometry.width / 2);
 });
 
 test("authored run candidates avoid label-driven grid inflation", async () => {
@@ -259,6 +343,58 @@ test("an explicit same-size constraint equalizes the referenced boxes", async ()
 function primitive(core, props = {}, children = []) {
   return { core, props, children };
 }
+
+function portOrderingDiagram(groupOrder = null) {
+  const portMembers = ["bottom", "middle", "top"]
+    .map((id) => primitive("port", { id, side: "left" }));
+  const targetChildren = groupOrder
+    ? [primitive("port-group", { id: "inputs", order: groupOrder }, portMembers)]
+    : portMembers;
+  const remotes = ["top", "middle", "bottom"].map((id) => primitive("node", { id, label: id }, [
+    primitive("port", { id: "out", side: "right" }),
+  ]));
+  const lines = ["top", "middle", "bottom"]
+    .map((id) => primitive("line", { id, from: `remotes/${id}.out`, to: `target.${id}` }));
+  return primitive("diagram", { id: "dock-order" }, [
+    primitive("row", { id: "system", gap: 100, align: "center" }, [
+      primitive("column", { id: "remotes", gap: 80 }, remotes),
+      primitive("node", { id: "target", label: "target", style: { minHeight: 300 } }, targetChildren),
+      ...lines,
+    ]),
+  ]);
+}
+
+test("free same-side docks follow remote endpoint projection without crossings", () => {
+  const scene = project(portOrderingDiagram());
+  layout(scene);
+  route(scene);
+  const target = scene.objectByPath.get("system/target");
+  const y = (id) => target.ports.get(id).point.y;
+  assert.ok(y("top") < y("middle") && y("middle") < y("bottom"));
+  for (const line of scene.lines) assert.equal(line.route.length, 2, `${line.id} should be a direct run`);
+});
+
+test("a fixed port-group order overrides geometric dock ordering", () => {
+  const scene = project(portOrderingDiagram("fixed"));
+  layout(scene);
+  route(scene);
+  const target = scene.objectByPath.get("system/target");
+  const y = (id) => target.ports.get(id).point.y;
+  assert.ok(y("bottom") < y("middle") && y("middle") < y("top"));
+  assert.equal(target.ports.get("bottom").group, target.ports.get("middle").group);
+  assert.equal(target.ports.get("middle").group, target.ports.get("top").group);
+});
+
+test("geometric dock ordering retains collision-free labels in a dense neighbor row", async () => {
+  const entry = path.join(repo, "examples", "uml", "use-case-diagram.tsx");
+  const { scene } = await solveFile(entry);
+  const line = scene.lines.find((candidate) => candidate.id === "refund-checkout");
+  const quality = analyzeScene(scene);
+  const objectOverlaps = quality.labelObjectOverlaps.filter((item) => item.line === line);
+  const decorOverlaps = quality.labelDecorOverlaps.filter((item) => item.line === line);
+  assert.deepEqual(objectOverlaps.map((item) => `${item.label.text}->${item.object.path}`), []);
+  assert.deepEqual(decorOverlaps.map((item) => `${item.label.text}->${item.object.owner.path}`), []);
+});
 
 function sparsePipeline(size) {
   const nodes = Array.from({ length: size }, (_, index) => primitive("node", { id: `n${index}`, label: `Node ${index}` }, [

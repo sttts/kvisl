@@ -1,5 +1,7 @@
 const SIDES = ["top", "right", "bottom", "left"];
 const SPACING = { none: 0, tiny: 6, small: 12, medium: 20, large: 32, xlarge: 48 };
+const ROUTE_CLEARANCE = 12;
+const BOUNDARY_CROSSING_BAND = 16;
 
 function length(value, fallback, tokens) {
   if (typeof value === "number") return value;
@@ -56,10 +58,19 @@ function directionToward(owner, fromBranch, toBranch) {
   return from <= to ? "bottom" : "top";
 }
 
-function addUniqueLine(region, line, corridor = null) {
-  if (region.entryLines.has(line)) return;
+function addUniqueLine(region, line, corridor = null, usage = "track") {
+  if (region.entryLines.has(line)) {
+    const entry = region.entries.find((candidate) => candidate.line === line);
+    // An authored corridor upgrades an implicit boundary crossing. The same
+    // line still occupies only one physical entry in the region.
+    if (entry && usage === "track") {
+      entry.usage = "track";
+      entry.corridor = corridor ?? entry.corridor;
+    }
+    return;
+  }
   region.entryLines.add(line);
-  region.entries.push({ line, corridor });
+  region.entries.push({ line, corridor, usage });
 }
 
 function lineLabelTexts(line) {
@@ -144,7 +155,10 @@ function nestedExitReservations(endpoint, lca, side, line, regions) {
   for (let current = endpoint.parent; current && current !== lca; current = current.parent) {
     if (!current.visible) continue;
     const region = paddingRegion(current, side, regions);
-    if (region) addUniqueLine(region, line);
+    // Hierarchy crossings need an ordered pin, not a parallel lane. Counting
+    // them as tracks inflated container padding and pulled routes away from
+    // their authored higher-level corridor.
+    if (region) addUniqueLine(region, line, null, "crossing");
   }
 }
 
@@ -161,6 +175,16 @@ function explicitPaddingSide(line, endpoint) {
     if (container && side && hasAncestorOrSelf(endpoint.object, container)) return side;
   }
   return null;
+}
+
+function explicitRegionConnectsBranches(line, lca, first, second) {
+  return line.segments.some((segment) => {
+    const between = segment.region?.kind === "gap" ? segment.region.between : segment.corridor?.between;
+    if (!between) return false;
+    const left = branchBelow(lca, between[0]);
+    const right = branchBelow(lca, between[1]);
+    return (left === first && right === second) || (left === second && right === first);
+  });
 }
 
 export function reserveRoutingSpace(scene) {
@@ -215,10 +239,12 @@ export function reserveRoutingSpace(scene) {
       const implicitRegions = physicalGapRegions(fromBranch, toBranch, regions, { implicit: true });
       for (const region of implicitRegions) addUniqueLine(region, line);
       if (implicitRegions.length) line.labelRegionKey = implicitRegions[Math.floor(implicitRegions.length / 2)].key;
-      // an author-declared port side wins over the topological direction —
-      // the line leaves where the port sits, so that band needs the room
-      const exitSide = (endpoint, fallback) =>
-        SIDES.includes(endpoint.port?.side) ? endpoint.port.side : explicitPaddingSide(line, endpoint) ?? fallback;
+      // A port side fixes departure from the leaf object. An explicit gap at
+      // this hierarchy level fixes the ancestor traversal instead; carrying
+      // the leaf side through every ancestor would route around that gap.
+      const explicitBranchTraversal = explicitRegionConnectsBranches(line, lca, fromBranch, toBranch);
+      const exitSide = (endpoint, fallback) => explicitPaddingSide(line, endpoint)
+        ?? (explicitBranchTraversal ? fallback : SIDES.includes(endpoint.port?.side) ? endpoint.port.side : fallback);
       const fromSide = exitSide(line.from, directionToward(lca, fromBranch, toBranch));
       const toSide = exitSide(line.to, directionToward(lca, toBranch, fromBranch));
       nestedExitReservations(line.from.object, lca, fromSide, line, regions);
@@ -269,21 +295,34 @@ export function reserveRoutingSpace(scene) {
       }
     }
     const labelDemand = reservations.get(region.key) ?? 0;
-    // share-eligible lines occupy one track, so demand counts distinct tracks
+    // Share-eligible authored lines occupy one track. Implicit hierarchy
+    // crossings pass through the band and therefore consume no parallel lane.
     const trackIndexByKey = new Map();
-    for (const entry of region.entries) {
+    const trackEntries = region.entries.filter((entry) => entry.usage !== "crossing");
+    for (const entry of trackEntries) {
       const key = lineShareKey(entry.line) ?? `line:${entry.line.id}`;
       if (!trackIndexByKey.has(key)) trackIndexByKey.set(key, trackIndexByKey.size);
       entry.trackKey = key;
     }
     const trackCount = trackIndexByKey.size;
-    region.thickness = Math.max(trackCount ? 12 + trackCount * region.spacing : 0, labelDemand);
+    const trackThickness = trackCount ? 12 + trackCount * region.spacing : 0;
+    const crossingThickness = region.kind === "padding" && region.entries.some((entry) => entry.usage === "crossing")
+      ? BOUNDARY_CROSSING_BAND
+      : 0;
+    region.thickness = Math.max(trackThickness, crossingThickness, labelDemand);
+    region.clearance = region.kind === "padding" && trackThickness > 0 ? ROUTE_CLEARANCE : 0;
     region.entries.forEach((entry) => {
-      entry.line.regionTracks.set(region.key, { region, index: trackIndexByKey.get(entry.trackKey), total: trackCount });
+      const crossing = entry.usage === "crossing";
+      entry.line.regionTracks.set(region.key, {
+        region,
+        index: crossing ? 0 : trackIndexByKey.get(entry.trackKey),
+        total: crossing ? 1 : trackCount,
+        crossing,
+      });
     });
 
     for (const corridor of region.corridors) {
-      const count = region.entries.filter((entry) => entry.corridor === corridor).length;
+      const count = trackEntries.filter((entry) => entry.corridor === corridor).length;
       if (corridor.capacity != null && count > corridor.capacity) {
         scene.diagnostics.push({
           severity: "error",
@@ -315,7 +354,10 @@ export function reserveRoutingSpace(scene) {
         region.owner.reserved.gaps[region.index] = Math.max(region.owner.reserved.gaps[region.index] ?? 0, region.thickness);
       }
     } else {
-      region.owner.reserved.padding[region.side] = Math.max(region.owner.reserved.padding[region.side], region.thickness);
+      region.owner.reserved.padding[region.side] = Math.max(
+        region.owner.reserved.padding[region.side],
+        region.thickness + region.clearance,
+      );
     }
   }
   // escalated reservations may target pockets no line registered in (a label

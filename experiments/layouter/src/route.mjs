@@ -54,7 +54,51 @@ function desiredEndpointSide(line, endpoint, target) {
   return paddingSideHint(line, endpoint) ?? chooseSide(target.box, remoteCenter(line, endpoint));
 }
 
-function placePorts(scene, objectIndex = null) {
+function dockAxis(side) {
+  return side === "top" || side === "bottom" ? "x" : "y";
+}
+
+function dockEntryProjection(entry) {
+  const axis = dockAxis(entry.kind === "port" ? entry.port.physicalSide : entry.endpoint.physicalSide);
+  if (entry.kind === "owned") return remoteCenter(entry.line, entry.endpoint)[axis];
+  if (!entry.port.attachments.length) return center(entry.target.box)[axis];
+  return entry.port.attachments.reduce((sum, { line, endpoint }) => sum + remoteCenter(line, endpoint)[axis], 0)
+    / entry.port.attachments.length;
+}
+
+function compareDockEntries(first, second) {
+  return first.projection - second.projection
+    || first.sourceOrder - second.sourceOrder
+    || first.identity.localeCompare(second.identity);
+}
+
+// Port groups are adjacency blocks. Geometry orders free/preferred members;
+// only an explicit fixed policy is allowed to retain authored member order.
+function orderDockEntries(entries) {
+  const blocks = new Map();
+  for (const entry of entries) {
+    entry.projection = dockEntryProjection(entry);
+    const group = entry.kind === "port" ? entry.port.group : null;
+    const key = group ? group : entry;
+    if (!blocks.has(key)) blocks.set(key, { group, entries: [] });
+    blocks.get(key).entries.push(entry);
+  }
+  const orderedBlocks = [...blocks.values()].map((block) => {
+    block.entries.sort(block.group?.order === "fixed"
+      ? (first, second) => first.sourceOrder - second.sourceOrder || first.identity.localeCompare(second.identity)
+      : compareDockEntries);
+    block.projection = block.entries.reduce((sum, entry) => sum + entry.projection, 0) / block.entries.length;
+    block.sourceOrder = Math.min(...block.entries.map((entry) => entry.sourceOrder));
+    block.identity = block.entries.map((entry) => entry.identity).sort().join("\u0000");
+    return block;
+  });
+  orderedBlocks.sort((first, second) => first.projection - second.projection
+    || first.sourceOrder - second.sourceOrder
+    || first.identity.localeCompare(second.identity));
+  return orderedBlocks.flatMap((block) => block.entries);
+}
+
+function placePorts(scene) {
   const buckets = new Map();
   for (const object of scene.objects) {
     for (const port of object.ports.values()) port.attachments = [];
@@ -79,7 +123,13 @@ function placePorts(scene, objectIndex = null) {
       port.physicalSide = rotateSide(localSide, target.physicalOrientation ?? object.physicalOrientation ?? 0);
       const key = `${target.path}:${port.physicalSide}`;
       if (!buckets.has(key)) buckets.set(key, []);
-      buckets.get(key).push({ kind: "port", port, target, sort: port.orderIndex });
+      buckets.get(key).push({
+        kind: "port",
+        port,
+        target,
+        sourceOrder: port.orderIndex,
+        identity: `port:${port.owner.path}.${port.id}`,
+      });
     }
   }
 
@@ -91,38 +141,23 @@ function placePorts(scene, objectIndex = null) {
       endpoint.physicalSide = side;
       const key = `${target.path}:${side}`;
       if (!buckets.has(key)) buckets.set(key, []);
-      buckets.get(key).push({ kind: "owned", endpoint, target, sort: 100000 + line.order });
+      buckets.get(key).push({
+        kind: "owned",
+        endpoint,
+        line,
+        target,
+        sourceOrder: 100000 + line.order,
+        identity: `line:${line.id}:${endpoint.end}`,
+      });
     }
   }
 
   for (const entries of buckets.values()) {
-    entries.sort((first, second) => first.sort - second.sort);
-    const placed = [];
-    entries.forEach((entry, index) => {
+    const ordered = orderDockEntries(entries);
+    ordered.forEach((entry, index) => {
       const side = entry.kind === "port" ? entry.port.physicalSide : entry.endpoint.physicalSide;
-      const fraction = (index + 1) / (entries.length + 1);
-      let point = pointOnSide(entry.target.box, side, fraction);
-      // a dock with a blocked departure slides along its side to open track;
-      // an off-center dock beats routing around the blocking box
-      if (objectIndex) {
-        const lateralAxis = side === "top" || side === "bottom" ? "x" : "y";
-        const measure = (candidate) => Math.min(rayClearanceAt(scene, candidate, side, entry.target, objectIndex), 300);
-        if (measure(point) < 160) {
-          let best = point;
-          let bestScore = [measure(point), 0];
-          for (let step = 1; step <= 16; step += 1) {
-            const candidate = pointOnSide(entry.target.box, side, (step + 0.5) / 17.5);
-            if (placed.some((other) => Math.abs(other[lateralAxis] - candidate[lateralAxis]) < 12)) continue;
-            const score = [measure(candidate), -Math.abs(candidate[lateralAxis] - point[lateralAxis])];
-            if (score[0] > bestScore[0] + 0.5 || (Math.abs(score[0] - bestScore[0]) <= 0.5 && score[1] > bestScore[1])) {
-              best = candidate;
-              bestScore = score;
-            }
-          }
-          point = best;
-        }
-      }
-      placed.push(point);
+      const fraction = (index + 1) / (ordered.length + 1);
+      const point = pointOnSide(entry.target.box, side, fraction);
       if (entry.kind === "port") entry.port.point = point;
       else {
         entry.endpoint.point = point;
@@ -141,6 +176,16 @@ function placePorts(scene, objectIndex = null) {
 }
 
 const OPPOSITE_SIDE = { left: "right", right: "left", top: "bottom", bottom: "top" };
+
+function preservesDockOrder(siblings, current, axis, target, spacing = 12) {
+  for (const sibling of siblings) {
+    if (sibling === current) continue;
+    if (sibling[axis] < current[axis] && target < sibling[axis] + spacing) return false;
+    if (sibling[axis] > current[axis] && target > sibling[axis] - spacing) return false;
+    if (sibling[axis] === current[axis] && Math.abs(target - sibling[axis]) < spacing) return false;
+  }
+  return true;
+}
 
 // A dock and the box it sits on; endpoint.point and port.point stay the same
 // object identity, so mutating the point in place moves every reference.
@@ -194,7 +239,7 @@ function alignFacingDocks(scene) {
     const target = Math.max(low, Math.min(high, (from.point[axis] + to.point[axis]) / 2));
     const fits = (endpoint, side) => {
       const siblings = docks.get(`${dockTarget(endpoint).path}:${side}`) ?? [];
-      return siblings.every((point) => point === endpoint.point || Math.abs(point[axis] - target) >= 12);
+      return preservesDockOrder(siblings, endpoint.point, axis, target);
     };
     if (!fits(from, fromSide) || !fits(to, toSide)) continue;
     from.point[axis] = target;
@@ -205,19 +250,22 @@ function alignFacingDocks(scene) {
 function regionGeometry(region) {
   if (region.kind === "padding") {
     const box = region.owner.box;
-    const thickness = Math.max(region.thickness, 12);
-    const padding = region.owner.paddingBox ?? { top: thickness, right: thickness, bottom: thickness, left: thickness };
+    const clearance = region.clearance ?? 0;
+    const padding = region.owner.paddingBox ?? { top: 12, right: 12, bottom: 12, left: 12 };
+    // A crossing-only region spans the existing content padding. It guides a
+    // perpendicular hierarchy crossing without manufacturing a parallel lane.
+    const thickness = region.thickness > 0 ? region.thickness : padding[region.side];
     const contentHeight = region.owner.contentHeight ?? 0;
     if (region.side === "top") {
-      return { x: box.x, y: box.y + padding.top + contentHeight - thickness, width: box.width, height: thickness, axis: "horizontal" };
+      return { x: box.x, y: box.y + padding.top + contentHeight - clearance - thickness, width: box.width, height: thickness, axis: "horizontal" };
     }
     if (region.side === "bottom") {
-      return { x: box.x, y: box.y + box.height - padding.bottom, width: box.width, height: thickness, axis: "horizontal" };
+      return { x: box.x, y: box.y + box.height - padding.bottom + clearance, width: box.width, height: thickness, axis: "horizontal" };
     }
     if (region.side === "left") {
-      return { x: box.x + padding.left - thickness, y: box.y, width: thickness, height: box.height, axis: "vertical" };
+      return { x: box.x + padding.left - clearance - thickness, y: box.y, width: thickness, height: box.height, axis: "vertical" };
     }
-    return { x: box.x + box.width - padding.right, y: box.y, width: thickness, height: box.height, axis: "vertical" };
+    return { x: box.x + box.width - padding.right + clearance, y: box.y, width: thickness, height: box.height, axis: "vertical" };
   }
   const first = region.owner.children[region.index]?.box;
   const second = region.owner.children[region.index + 1]?.box;
@@ -239,11 +287,101 @@ function trackPoint(track, start, end) {
   if (geometry.axis === "vertical") {
     const x = geometry.x + geometry.width / 2 + offset;
     const y = Math.max(geometry.y, Math.min(geometry.y + geometry.height, (start.y + end.y) / 2));
-    return { x, y, region: track.region, soft: true };
+    return { x, y, region: track.region, soft: true, crossing: track.crossing };
   }
   const x = Math.max(geometry.x, Math.min(geometry.x + geometry.width, (start.x + end.x) / 2));
   const y = geometry.y + geometry.height / 2 + offset;
-  return { x, y, region: track.region, soft: true };
+  return { x, y, region: track.region, soft: true, crossing: track.crossing };
+}
+
+function longitudinalSpan(line, region) {
+  const geometry = region.geometry;
+  let longest = 0;
+  for (let index = 1; index < line.route.length; index += 1) {
+    const first = line.route[index - 1];
+    const second = line.route[index];
+    if (geometry.axis === "vertical") {
+      if (first.x !== second.x || first.x < geometry.x || first.x > geometry.x + geometry.width) continue;
+      const top = Math.max(Math.min(first.y, second.y), geometry.y);
+      const bottom = Math.min(Math.max(first.y, second.y), geometry.y + geometry.height);
+      longest = Math.max(longest, bottom - top);
+    } else {
+      if (first.y !== second.y || first.y < geometry.y || first.y > geometry.y + geometry.height) continue;
+      const left = Math.max(Math.min(first.x, second.x), geometry.x);
+      const right = Math.min(Math.max(first.x, second.x), geometry.x + geometry.width);
+      longest = Math.max(longest, right - left);
+    }
+  }
+  return longest;
+}
+
+function trackPreference(entries, region) {
+  const axis = region.geometry.axis === "vertical" ? "x" : "y";
+  const along = axis === "x" ? "y" : "x";
+  const endpointPoints = entries.flatMap(({ line }) => [line.from?.point, line.to?.point]).filter(Boolean);
+  const mean = (key) => endpointPoints.reduce((sum, point) => sum + point[key], 0) / Math.max(1, endpointPoints.length);
+  return {
+    corridorRank: Math.min(...entries.map((entry) => entry.corridor?.rank ?? Number.MAX_SAFE_INTEGER)),
+    normal: mean(axis),
+    along: mean(along),
+    identity: entries.map((entry) => entry.line.id).sort().join("\u0000"),
+  };
+}
+
+function compareTrackPreference(first, second) {
+  return first.preference.corridorRank - second.preference.corridorRank
+    || first.preference.normal - second.preference.normal
+    || first.preference.along - second.preference.along
+    || first.preference.identity.localeCompare(second.preference.identity);
+}
+
+// A perpendicular crossing needs an intersection with a region, not a lane
+// along it. Classify from a provisional route, then center only the intervals
+// that actually occupy the region longitudinally. Geometric projection (and
+// authored corridor rank) decides their order; identity is only a final tie.
+function classifyRegionTracks(scene) {
+  let changed = false;
+  for (const region of scene.regions.values()) {
+    const authored = region.entries.filter((entry) => entry.usage !== "crossing");
+    const groups = new Map();
+    for (const entry of authored) {
+      const key = entry.trackKey ?? `line:${entry.line.id}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(entry);
+    }
+    const threshold = Math.max(24, Math.min(48, region.thickness ?? 0));
+    const longitudinal = [];
+    for (const [key, entries] of groups) {
+      const occupiesLane = entries.some((entry) => longitudinalSpan(entry.line, region) > threshold + 0.5);
+      if (occupiesLane) longitudinal.push({ key, entries, preference: trackPreference(entries, region) });
+      for (const entry of entries) {
+        const track = entry.line.regionTracks.get(region.key);
+        if (!track) continue;
+        const crossing = !occupiesLane;
+        if (track.crossing !== crossing) changed = true;
+        track.crossing = crossing;
+      }
+    }
+    longitudinal.sort(compareTrackPreference);
+    longitudinal.forEach((group, index) => {
+      for (const entry of group.entries) {
+        const track = entry.line.regionTracks.get(region.key);
+        if (track.index !== index || track.total !== longitudinal.length) changed = true;
+        track.index = index;
+        track.total = longitudinal.length;
+      }
+    });
+    for (const entries of groups.values()) {
+      for (const entry of entries) {
+        const track = entry.line.regionTracks.get(region.key);
+        if (!track?.crossing) continue;
+        if (track.index !== 0 || track.total !== 1) changed = true;
+        track.index = 0;
+        track.total = 1;
+      }
+    }
+  }
+  return changed;
 }
 
 class SpatialIndex {
@@ -584,6 +722,28 @@ function explicitSegmentOwner(segment) {
   return segment.corridor?.between?.[0]?.parent ?? null;
 }
 
+function branchBelow(ancestor, object) {
+  let current = object;
+  while (current?.parent && current.parent !== ancestor) current = current.parent;
+  return current?.parent === ancestor ? current : null;
+}
+
+function isDirectGapCrossing(line, region) {
+  if (region.kind !== "gap") return false;
+  // An explicit share group needs a longitudinal track block even when one
+  // member could cross the gap directly; otherwise its bundle topology would
+  // disagree with the other members.
+  if (line.share?.group) return false;
+  const explicitRegions = line.segments.filter((segment) => segment.region || segment.corridor);
+  if (explicitRegions.length !== 1) return false;
+  const fromBranch = branchBelow(region.owner, line.from?.object);
+  const toBranch = branchBelow(region.owner, line.to?.object);
+  if (!fromBranch || !toBranch || fromBranch === toBranch) return false;
+  const start = Math.min(fromBranch.siblingIndex, toBranch.siblingIndex);
+  const end = Math.max(fromBranch.siblingIndex, toBranch.siblingIndex);
+  return region.index >= start && region.index < end;
+}
+
 function insideOrSelf(object, ancestor) {
   return object === ancestor || hasAncestor(object, ancestor);
 }
@@ -612,7 +772,12 @@ function orderedPins(line, start, end) {
     }
     if ([...explicitPadding].some((region) => region.owner === track.region.owner && track.region.kind === "gap")) continue;
     if (explicitIndex >= 0) {
-      groups.push({ phase: 2, rank: explicitIndex, pins: [trackPoint(track, start, end)] });
+      const pin = trackPoint(track, start, end);
+      // A sole authored gap between the endpoint branches is a crossing, not
+      // a request to travel along the gap. Keep its cross-axis coordinate and
+      // let routing choose the along-axis intersection from the endpoints.
+      if (isDirectGapCrossing(line, track.region)) pin.crossing = true;
+      groups.push({ phase: 2, rank: explicitIndex, pins: [pin] });
       continue;
     }
     // an implicit exit/entry band that contradicts the chosen dock side would
@@ -731,8 +896,18 @@ function routeLine(line, index, routeIndex) {
           const vector = SIDE_VECTOR[pin.endpoint.physicalSide];
           const x = vector.x > 0 ? Math.max(pin.x, escape.x) : vector.x < 0 ? Math.min(pin.x, escape.x) : pin.x;
           pins.push({ x, y: clamp(cursor.y) });
-        }
-        else {
+        } else if (pin.crossing) {
+          const fromSide = cursor.x === start.x && cursor.y === start.y ? line.from?.physicalSide : null;
+          const toSide = nextTravel === end ? line.to?.physicalSide : null;
+          const y = fromSide === "left" || fromSide === "right"
+            ? cursor.y
+            : toSide === "left" || toSide === "right" ? nextTravel.y : cursor.y;
+          // Move along the endpoint branch before entering the gap. Without
+          // this point, two equal-length L candidates can choose a vertical
+          // run inside a gap that is meant to be crossed once.
+          if (cursor.y !== y) pins.push({ x: cursor.x, y: clamp(y) });
+          pins.push({ x: pin.x, y: clamp(y) });
+        } else {
           const nextY = nextTravel.soft && nextTravel.region?.geometry?.axis === "vertical" ? cursor.y : nextTravel.y;
           pins.push({ x: pin.x, y: clamp(cursor.y) }, { x: pin.x, y: clamp(nextY) });
         }
@@ -743,8 +918,15 @@ function routeLine(line, index, routeIndex) {
           const vector = SIDE_VECTOR[pin.endpoint.physicalSide];
           const y = vector.y > 0 ? Math.max(pin.y, escape.y) : vector.y < 0 ? Math.min(pin.y, escape.y) : pin.y;
           pins.push({ x: clamp(cursor.x), y });
-        }
-        else {
+        } else if (pin.crossing) {
+          const fromSide = cursor.x === start.x && cursor.y === start.y ? line.from?.physicalSide : null;
+          const toSide = nextTravel === end ? line.to?.physicalSide : null;
+          const x = fromSide === "top" || fromSide === "bottom"
+            ? cursor.x
+            : toSide === "top" || toSide === "bottom" ? nextTravel.x : cursor.x;
+          if (cursor.x !== x) pins.push({ x: clamp(x), y: cursor.y });
+          pins.push({ x: clamp(x), y: pin.y });
+        } else {
           const nextX = nextTravel.soft && nextTravel.region?.geometry?.axis === "horizontal" ? cursor.x : nextTravel.x;
           pins.push({ x: clamp(cursor.x), y: pin.y }, { x: clamp(nextX), y: pin.y });
         }
@@ -896,7 +1078,7 @@ function slideDocks(scene, index) {
       const high = (lateralAxis === "x" ? box.x + box.width : box.y + box.height) - 10;
       if (target < low || target > high) continue;
       const siblings = sideDocks.get(`${dockTarget(endpoint).path}:${side}`) ?? [];
-      if (!siblings.every((point) => point === endpoint.point || Math.abs(point[lateralAxis] - target) >= 12)) continue;
+      if (!preservesDockOrder(siblings, endpoint.point, lateralAxis, target)) continue;
       // the new stub column must not clip an obstacle
       const movedDock = { ...dock, [lateralAxis]: target };
       const movedEscape = { ...escape, [lateralAxis]: target };
@@ -962,28 +1144,99 @@ function positionAlong(segment, ratio) {
   };
 }
 
-function pointLabelCandidates(point, horizontal, label, size, rank) {
-  const offsets = [7, 18, 32, 48, 72, 96];
+function pointLabelCandidates(point, horizontal, label, size, rank, directionalOffsets = new Map()) {
+  const baseOffsets = [7, 18, 32, 48, 72, 96];
   const angle = label.orientation === "along" && !horizontal ? 90 : 0;
   const visualWidth = angle ? size.height : size.width;
   const visualHeight = angle ? size.width : size.height;
-  return offsets.flatMap((offset, offsetIndex) => [-1, 1].map((direction) => ({
-    x: horizontal ? point.x - visualWidth / 2 : point.x + direction * (visualWidth / 2 + offset) - visualWidth / 2,
-    y: horizontal ? point.y + direction * (visualHeight / 2 + offset) - visualHeight / 2 : point.y - visualHeight / 2,
-    width: visualWidth,
-    height: visualHeight,
-    angle,
-    rank: rank + offsetIndex * 0.1,
-  })));
+  return [-1, 1].flatMap((direction) => {
+    const offsets = [...new Set([...baseOffsets, ...(directionalOffsets.get(direction) ?? [])])].sort((first, second) => first - second);
+    return offsets.map((offset, offsetIndex) => ({
+      x: horizontal ? point.x - visualWidth / 2 : point.x + direction * (visualWidth / 2 + offset) - visualWidth / 2,
+      y: horizontal ? point.y + direction * (visualHeight / 2 + offset) - visualHeight / 2 : point.y - visualHeight / 2,
+      width: visualWidth,
+      height: visualHeight,
+      angle,
+      rank: rank + offsetIndex * 0.1,
+    }));
+  });
 }
 
-function segmentLabelCandidates(segment, label, size, rank) {
+function boundedLocalValues(values, limit, preferred) {
+  const unique = [...new Set(values.map((value) => Math.round(value * 10000) / 10000))]
+    .sort((first, second) => Math.abs(first - preferred) - Math.abs(second - preferred) || first - second);
+  if (unique.length <= limit) return unique;
+  const central = unique.slice(0, limit - 4);
+  const extremes = [...unique].sort((first, second) => first - second);
+  return [...new Set([...central, ...extremes.slice(0, 2), ...extremes.slice(-2)])];
+}
+
+// A dense row may occupy every short perpendicular label offset. Query only
+// a bounded local band, then add the exact offsets that clear nearby boxes;
+// this stays deterministic and avoids a canvas-wide candidate search.
+function localLabelOptions(segment, label, size, objectIndex) {
   const horizontal = segment.first.y === segment.second.y;
-  const ratios = label.placement === "start" ? [0.2, 0.35]
+  const angle = label.orientation === "along" && !horizontal ? 90 : 0;
+  const visualWidth = angle ? size.height : size.width;
+  const visualHeight = angle ? size.width : size.height;
+  const radius = Math.max(128, Math.min(320, Math.max(visualWidth, visualHeight) * 5));
+  const left = Math.min(segment.first.x, segment.second.x);
+  const right = Math.max(segment.first.x, segment.second.x);
+  const top = Math.min(segment.first.y, segment.second.y);
+  const bottom = Math.max(segment.first.y, segment.second.y);
+  const nearby = objectIndex.queryBox({
+    x: left - radius,
+    y: top - radius,
+    width: right - left + radius * 2,
+    height: bottom - top + radius * 2,
+  });
+  const offsets = new Map([[-1, []], [1, []]]);
+  const ratios = [];
+  const clearance = 8;
+  for (const object of nearby) {
+    const box = object.box;
+    if (horizontal) {
+      if (box.x + box.width < left - visualWidth / 2 || box.x > right + visualWidth / 2) continue;
+      const aboveDistance = segment.first.y - (box.y + box.height);
+      const belowDistance = box.y - segment.first.y;
+      if (aboveDistance >= 0 && aboveDistance <= radius) offsets.get(-1).push(segment.first.y - box.y + clearance);
+      if (belowDistance >= 0 && belowDistance <= radius) offsets.get(1).push(box.y + box.height - segment.first.y + clearance);
+      const delta = segment.second.x - segment.first.x;
+      if (delta !== 0) {
+        ratios.push((box.x - visualWidth / 2 - clearance - segment.first.x) / delta);
+        ratios.push((box.x + box.width + visualWidth / 2 + clearance - segment.first.x) / delta);
+      }
+    } else {
+      if (box.y + box.height < top - visualHeight / 2 || box.y > bottom + visualHeight / 2) continue;
+      const leftDistance = segment.first.x - (box.x + box.width);
+      const rightDistance = box.x - segment.first.x;
+      if (leftDistance >= 0 && leftDistance <= radius) offsets.get(-1).push(segment.first.x - box.x + clearance);
+      if (rightDistance >= 0 && rightDistance <= radius) offsets.get(1).push(box.x + box.width - segment.first.x + clearance);
+      const delta = segment.second.y - segment.first.y;
+      if (delta !== 0) {
+        ratios.push((box.y - visualHeight / 2 - clearance - segment.first.y) / delta);
+        ratios.push((box.y + box.height + visualHeight / 2 + clearance - segment.first.y) / delta);
+      }
+    }
+  }
+  for (const direction of [-1, 1]) {
+    offsets.set(direction, boundedLocalValues(offsets.get(direction), 16, 0));
+  }
+  const boundedRatios = boundedLocalValues(ratios.filter((ratio) => ratio > 0 && ratio < 1), 16, 0.5);
+  return { offsets, ratios: boundedRatios };
+}
+
+function segmentLabelCandidates(segment, label, size, rank, objectIndex) {
+  const horizontal = segment.first.y === segment.second.y;
+  const baseRatios = label.placement === "start" ? [0.2, 0.35]
     : label.placement === "end" ? [0.8, 0.65]
     : [0.5, 0.35, 0.65, 0.25, 0.75, 0.15, 0.85];
+  const local = localLabelOptions(segment, label, size, objectIndex);
+  const ratios = label.placement === "start" || label.placement === "end"
+    ? baseRatios
+    : [...baseRatios, ...local.ratios];
   return ratios.flatMap((ratio, ratioIndex) =>
-    pointLabelCandidates(positionAlong(segment, ratio), horizontal, label, size, rank + ratioIndex * 0.05));
+    pointLabelCandidates(positionAlong(segment, ratio), horizontal, label, size, rank + ratioIndex * 0.05, local.offsets));
 }
 
 function authoredSegmentRegions(scene, authored) {
@@ -1043,7 +1296,7 @@ function authoredRunPoints(segment, geometry, anchor, label, size) {
   return unique.map((value) => horizontal ? { x: value, y: anchor.y } : { x: anchor.x, y: value });
 }
 
-function authoredSegmentLabelCandidates(scene, line, label, size) {
+function authoredSegmentLabelCandidates(scene, line, label, size, objectIndex) {
   const regions = authoredSegmentRegions(scene, label.authoredSegment);
   if (!regions.length) return [];
   const candidates = [];
@@ -1059,8 +1312,9 @@ function authoredSegmentLabelCandidates(scene, line, label, size) {
         : prominence;
       const point = segmentRegionPoint(segment, region.geometry);
       if (point) {
+        const directionalOffsets = localLabelOptions(segment, label, size, objectIndex).offsets;
         for (const [rank, runPoint] of authoredRunPoints(segment, region.geometry, point, label, size).entries()) {
-          candidates.push(...pointLabelCandidates(runPoint, segmentHorizontal, label, size, -4 + routeRank * 0.2 + rank * 0.02)
+          candidates.push(...pointLabelCandidates(runPoint, segmentHorizontal, label, size, -4 + routeRank * 0.2 + rank * 0.02, directionalOffsets)
             .map((candidate) => ({
               ...candidate,
               authoredRegion: region,
@@ -1179,8 +1433,8 @@ function placeAllLabels(scene, objectIndex) {
       const candidates = spec.endpoint
         ? endpointLabelCandidates(spec.endpoint, spec, size, 0)
         : [
-            ...(spec.authoredSegment ? authoredSegmentLabelCandidates(scene, line, spec, size) : []),
-            ...segments.flatMap((segment, rank) => segmentLabelCandidates(segment, spec, size, rank + 4)),
+            ...(spec.authoredSegment ? authoredSegmentLabelCandidates(scene, line, spec, size, objectIndex) : []),
+            ...segments.flatMap((segment, rank) => segmentLabelCandidates(segment, spec, size, rank + 4, objectIndex)),
           ];
       if (!candidates.length) continue;
       candidates.sort((first, second) =>
@@ -1265,14 +1519,20 @@ export function containerBorderRings(scene) {
 export function route(scene) {
   const obstacles = scene.objects.filter((object) => object.visible && object.children.length === 0 && !object.frame && !["title", "subtitle", "legend-item"].includes(object.kind));
   const index = new SpatialIndex([...obstacles, ...boundaryLabelStrips(scene)]);
-  placePorts(scene, index);
+  placePorts(scene);
   alignFacingDocks(scene);
   for (const region of scene.regions.values()) region.geometry = regionGeometry(region);
   sharedPins(scene, index);
-  const routeIndex = new SpatialIndex([]);
-  for (const line of scene.lines) {
-    routeLine(line, index, routeIndex);
-    indexRoute(routeIndex, line);
+  const routeAll = () => {
+    const routeIndex = new SpatialIndex([]);
+    for (const line of scene.lines) {
+      routeLine(line, index, routeIndex);
+      indexRoute(routeIndex, line);
+    }
+  };
+  routeAll();
+  if (classifyRegionTracks(scene)) {
+    routeAll();
   }
   improveRoutes(scene, index);
   slideDocks(scene, index);
