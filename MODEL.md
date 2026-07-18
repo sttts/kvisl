@@ -285,7 +285,7 @@ Labels belong to segments and to ends. A segment label has a placement along its
 
 An `End` carries the endpoint reference plus everything that adorns that end: per-end head, dock style, side hint, and ordered end labels. Exactly two `End` children are required when the form is used; mixing `End` children with `from`/`to` props, or with a conflicting line-level `heads` value, is a diagnostic. `from`/`to` remain the sugar for the common two-liner and normalize into the same two endpoint records.
 
-Lines reserve routing space by default (`space: "reserve"`); `overlay` opts a line out of layout interaction. A line may list regions to `avoid`.
+Lines reserve routing space by default (`space: "reserve"`); `overlay` opts a line out of layout and route-occupancy interaction. Overlay intersections therefore do not displace either the overlay or reserving lines. A line may list regions to `avoid`.
 
 ## 9. Sharing: port joins, groups, trunks, and branches
 

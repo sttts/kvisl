@@ -62,5 +62,8 @@
   <path d="M 672 302 L 672 412" class="purple" marker-end="url(#cdPurple)"/>
   <path d="M 850 302 L 1050 302 L 1050 412" class="purple" marker-end="url(#cdPurple)"/>
 
-  <text x="600" y="530" text-anchor="middle" class="small muted">gap(control-plane, fleet) exists implicitly. The two Corridor declarations subdivide it in declaration order; the divider is decoration on the same gap — no fake boundary element.</text>
+  <text x="600" y="520" text-anchor="middle" class="small muted">
+    <tspan x="600">gap(control-plane, fleet) exists implicitly. The two Corridor declarations subdivide it in declaration order;</tspan>
+    <tspan x="600" dy="22">the divider is decoration on the same gap — no fake boundary element.</tspan>
+  </text>
 </svg>

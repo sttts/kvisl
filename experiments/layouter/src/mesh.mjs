@@ -14,6 +14,36 @@ function geometry(x, y, width, height, axis) {
   return { x, y, width: Math.max(0, width), height: Math.max(0, height), axis };
 }
 
+function gridStructure(object, members) {
+  const columns = Math.max(1, Math.min(object.layoutData?.columns ?? object.columns ?? 1, members.length));
+  const rows = Math.ceil(members.length / columns);
+  const columnMembers = Array.from({ length: columns }, () => []);
+  const rowMembers = Array.from({ length: rows }, () => []);
+  members.forEach((member, index) => {
+    columnMembers[index % columns].push(member);
+    rowMembers[Math.floor(index / columns)].push(member);
+  });
+  return { columns, rows, columnMembers, rowMembers };
+}
+
+function gridGutterGeometry(object, members, axis, index) {
+  const { columns, rows, columnMembers, rowMembers } = gridStructure(object, members);
+  const top = Math.min(...members.map((member) => member.box.y));
+  const bottom = Math.max(...members.map((member) => member.box.y + member.box.height));
+  const left = Math.min(...members.map((member) => member.box.x));
+  const right = Math.max(...members.map((member) => member.box.x + member.box.width));
+  if (axis === "column") {
+    if (index < 0 || index >= columns - 1) return null;
+    const start = Math.max(...columnMembers[index].map((member) => member.box.x + member.box.width));
+    const end = Math.min(...columnMembers[index + 1].map((member) => member.box.x));
+    return geometry(start, top, end - start, bottom - top, "vertical");
+  }
+  if (index < 0 || index >= rows - 1) return null;
+  const start = Math.max(...rowMembers[index].map((member) => member.box.y + member.box.height));
+  const end = Math.min(...rowMembers[index + 1].map((member) => member.box.y));
+  return geometry(left, start, right - left, end - start, "horizontal");
+}
+
 // Container titles are measured residents of the top padding mesh.
 export function boundaryLabelStrips(scene) {
   return scene.objects
@@ -57,6 +87,10 @@ function reservedRegionEnvelope(region) {
       return geometry(box.x + padding.left - clearance - thickness, box.y, thickness, box.height, "vertical");
     }
     return geometry(box.x + box.width - padding.right + clearance, box.y, thickness, box.height, "vertical");
+  }
+  if (region.gridAxis) {
+    return gridGutterGeometry(region.owner, flowChildren(region.owner), region.gridAxis, region.index)
+      ?? geometry(0, 0, 0, 0, region.gridAxis === "column" ? "vertical" : "horizontal");
   }
   const first = region.owner.children[region.index]?.box;
   const second = region.owner.children[region.index + 1]?.box;
@@ -268,8 +302,9 @@ function connectChannelCells(cells) {
   }
 }
 
-function matchingGridRegions(activeGaps, cellGeometry) {
+function matchingGridRegions(activeGaps, cellGeometry, axis, index) {
   return activeGaps.filter((region) => {
+    if (region.gridAxis) return region.gridAxis === axis && region.index === index;
     const routeGeometry = reservedRegionEnvelope(region);
     return routeGeometry?.axis === cellGeometry.axis
       && routeGeometry.x === cellGeometry.x
@@ -280,26 +315,11 @@ function matchingGridRegions(activeGaps, cellGeometry) {
 }
 
 function gridGutters(object, members, activeGaps) {
-  const columns = Math.max(1, Math.min(object.layoutData?.columns ?? object.columns ?? 1, members.length));
-  const rows = Math.ceil(members.length / columns);
+  const { columns, rows } = gridStructure(object, members);
   const cells = [];
-  const columnMembers = Array.from({ length: columns }, () => []);
-  const rowMembers = Array.from({ length: rows }, () => []);
-  members.forEach((member, index) => {
-    columnMembers[index % columns].push(member);
-    rowMembers[Math.floor(index / columns)].push(member);
-  });
-  const top = Math.min(...members.map((member) => member.box.y));
-  const bottom = Math.max(...members.map((member) => member.box.y + member.box.height));
-  const left = Math.min(...members.map((member) => member.box.x));
-  const right = Math.max(...members.map((member) => member.box.x + member.box.width));
   for (let column = 0; column < columns - 1; column += 1) {
-    const before = columnMembers[column];
-    const after = columnMembers[column + 1];
-    const start = Math.max(...before.map((member) => member.box.x + member.box.width));
-    const end = Math.min(...after.map((member) => member.box.x));
-    const cellGeometry = geometry(start, top, end - start, bottom - top, "vertical");
-    const regions = matchingGridRegions(activeGaps, cellGeometry);
+    const cellGeometry = gridGutterGeometry(object, members, "column", column);
+    const regions = matchingGridRegions(activeGaps, cellGeometry, "column", column);
     cells.push({
       key: `mesh:grid-column-gap:${object.path || "$root"}:${column}`,
       slotKey: `mesh:grid-column-gap:${object.path || "$root"}:${column}`,
@@ -313,12 +333,8 @@ function gridGutters(object, members, activeGaps) {
     });
   }
   for (let row = 0; row < rows - 1; row += 1) {
-    const before = rowMembers[row];
-    const after = rowMembers[row + 1];
-    const start = Math.max(...before.map((member) => member.box.y + member.box.height));
-    const end = Math.min(...after.map((member) => member.box.y));
-    const cellGeometry = geometry(left, start, right - left, end - start, "horizontal");
-    const regions = matchingGridRegions(activeGaps, cellGeometry);
+    const cellGeometry = gridGutterGeometry(object, members, "row", row);
+    const regions = matchingGridRegions(activeGaps, cellGeometry, "row", row);
     cells.push({
       key: `mesh:grid-row-gap:${object.path || "$root"}:${row}`,
       slotKey: `mesh:grid-row-gap:${object.path || "$root"}:${row}`,
@@ -421,11 +437,20 @@ function bindRegions(scene) {
     }
   }
   scene.channelBindings = new Map();
-  for (const region of scene.regions.values()) {
+  for (const region of [...scene.regions.values()]) {
     const cellKeys = [...new Set(cellsByRegion.get(region.key) ?? [])].sort();
     const cells = cellKeys.map((key) => scene.channelCellByKey.get(key));
     const coreCells = cells.filter((cell) => cell.zone === "track" || cell.zone === "band");
     const trackCell = [...coreCells].sort((first, second) => compareTrackCells(region, first, second))[0] ?? null;
+    // A non-uniform grid may have overlapping row/column envelopes, so that
+    // one nominal gutter has no positive physical cell. It cannot reserve or
+    // route a longitudinal lane; remove the speculative implicit region from
+    // both IR indexes before allocations are created.
+    if (region.gridAxis && !trackCell) {
+      scene.regions.delete(region.key);
+      for (const entry of region.entries) entry.line.regionTracks.delete(region.key);
+      continue;
+    }
     const binding = {
       key: region.key,
       region,
@@ -460,7 +485,10 @@ export function buildChannelMesh(scene) {
   const activeGaps = new Map();
   for (const region of scene.regions.values()) {
     if (region.kind === "padding") activePadding.set(`${region.owner.path || "$root"}:${region.side}`, region);
-    if (region.kind === "gap") activeGaps.set(`${region.owner.path || "$root"}:${region.index}`, region);
+    if (region.kind === "gap") {
+      const axis = region.gridAxis ? `:${region.gridAxis}` : "";
+      activeGaps.set(`${region.owner.path || "$root"}${axis}:${region.index}`, region);
+    }
   }
   for (const object of scene.objects) {
     const members = flowChildren(object);

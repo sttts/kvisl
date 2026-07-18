@@ -2,12 +2,15 @@ import { headGeometry, minimumHeadRun, normalizedHeads } from "./heads.mjs";
 import { buildChannelMesh, regionGeometry } from "./mesh.mjs";
 import { rotateSide } from "./orientation.mjs";
 import {
+  authorizeSharedGeometry,
   buildShareGroups,
   segmentsMayShareGeometry,
 } from "./sharing.mjs";
 
 const CELL = 160;
 const ROUTE_CLEARANCE = 12;
+const CROSSING_PENALTY = 180;
+const CROSSING_REFINEMENT_PENALTY = 600;
 const SIDE_VECTOR = {
   top: { x: 0, y: -1 },
   right: { x: 1, y: 0 },
@@ -628,6 +631,7 @@ function classifyRegionTracks(scene) {
       const occupiesLane = entries.some((entry) => {
         const authoredRole = nestedAuthoredRole(entry.line, region);
         return authoredRole === "outer"
+          || requiresSharedGapLane(entry.line, region)
           || authoredRole !== "nested" && (longitudinalSpans.get(entry.line)?.get(region.key) ?? 0) > threshold + 0.5;
       });
       if (occupiesLane) longitudinal.push({ key, entries, preference: trackPreference(entries, region) });
@@ -783,6 +787,102 @@ function alignShareApproachTracks(scene) {
   return changed;
 }
 
+// Explicit bundles do not own a canonical port, so their corridor lanes and
+// entity-only target docks are initially allocated independently. Preserve
+// the incoming planar order across both allocations; otherwise two parallel
+// lanes must braid at either the corridor bend or the terminal fan-in.
+function alignExplicitBundleLaneOrder(scene) {
+  let changed = false;
+  for (const group of buildShareGroups(scene).values()) {
+    if (group.mode !== "bundle" || group.source.kind !== "explicit" || group.members.length < 2) continue;
+    const endpointGroups = new Map();
+    for (const member of group.members) {
+      for (const endpoint of [member.line.from, member.line.to]) {
+        if (!endpoint?.point || endpoint.port) continue;
+        const key = `${dockTarget(endpoint).path}:${endpoint.physicalSide}`;
+        const entries = endpointGroups.get(key) ?? [];
+        entries.push({ member, endpoint });
+        endpointGroups.set(key, entries);
+      }
+    }
+    const common = [...endpointGroups.values()].find((entries) => entries.length === group.members.length);
+    if (!common) continue;
+    const commonByLine = new Map(common.map((entry) => [entry.member.line, entry]));
+    const firstAllocations = [...new Set([...(group.members[0].line.regionTracks?.values() ?? [])]
+      .map((track) => track.allocation))].filter(Boolean);
+    let records = null;
+    for (const firstAllocation of firstAllocations) {
+      const candidates = [];
+      for (const member of group.members) {
+        const allocation = [...new Set([...(member.line.regionTracks?.values() ?? [])]
+          .map((track) => track.allocation))]
+          .find((item) => item?.regionKey === firstAllocation.regionKey && item.axis === firstAllocation.axis && !item.crossing);
+        if (!allocation) break;
+        const endpoint = commonByLine.get(member.line)?.endpoint;
+        const route = endpoint === member.line.to ? member.line.route : [...member.line.route].reverse();
+        const normal = allocation.axis === "vertical" ? "x" : "y";
+        const cross = allocation.axis === "vertical" ? "y" : "x";
+        const entry = route.find((point) => Math.abs(point[normal] - allocation.coordinate) < 0.5);
+        if (!entry) break;
+        const remote = endpoint === member.line.to ? member.line.from : member.line.to;
+        const remoteEscape = escapePoint(remote, remote.routeEscapeDistance);
+        const turnsDirectlyOntoApproach = allocation.axis === "vertical"
+          ? remote.physicalSide === "top" || remote.physicalSide === "bottom"
+          : remote.physicalSide === "left" || remote.physicalSide === "right";
+        candidates.push({
+          member,
+          endpoint,
+          allocation,
+          approach: turnsDirectlyOntoApproach ? remoteEscape[cross] : entry[cross],
+        });
+      }
+      if (candidates.length === group.members.length) {
+        records = candidates;
+        break;
+      }
+    }
+    if (!records) continue;
+    records.sort((first, second) => first.approach - second.approach
+      || first.member.line.order - second.member.line.order
+      || first.member.line.id.localeCompare(second.member.line.id));
+    const allocationCoordinates = records.map((record) => record.allocation.coordinate).sort((first, second) => first - second);
+    const dockAxisName = dockAxis(records[0].endpoint.physicalSide);
+    const dockCoordinates = records.map((record) => record.endpoint.point[dockAxisName]).sort((first, second) => first - second);
+    for (const [index, record] of records.entries()) {
+      if (Math.abs(record.allocation.coordinate - allocationCoordinates[index]) > 0.001) changed = true;
+      if (Math.abs(record.endpoint.point[dockAxisName] - dockCoordinates[index]) > 0.001) changed = true;
+      record.allocation.coordinate = allocationCoordinates[index];
+      record.endpoint.point[dockAxisName] = dockCoordinates[index];
+      record.member.laneIndex = index;
+      record.member.membership.laneIndex = index;
+      record.member.membership.laneCount = records.length;
+    }
+    const laneByMember = new Map(group.bundle.lanes.flatMap((lane) => lane.members.map((member) => [member, lane])));
+    group.bundle.lanes = records.map((record, laneIndex) => {
+      const lane = laneByMember.get(record.member);
+      lane.laneIndex = laneIndex;
+      return lane;
+    });
+    group.members = records.map((record) => record.member);
+    group.bundle.laneOrder = group.members.map((member) => member.line.id);
+    group.bundle.offsetByMember = terminalLaneOffsets(group.bundle.lanes, 0);
+  }
+  return changed;
+}
+
+function linesInRoutingOrder(scene) {
+  const ordered = [...scene.lines];
+  for (const group of buildShareGroups(scene).values()) {
+    if (group.mode !== "bundle" || group.source.kind !== "explicit") continue;
+    const positions = group.members.map((member) => ordered.indexOf(member.line)).sort((first, second) => first - second);
+    const members = [...group.members].sort((first, second) => first.laneIndex - second.laneIndex
+      || first.line.order - second.line.order
+      || first.line.id.localeCompare(second.line.id));
+    positions.forEach((position, index) => { ordered[position] = members[index].line; });
+  }
+  return ordered;
+}
+
 class SpatialIndex {
   constructor(objects) {
     this.objects = objects;
@@ -838,7 +938,7 @@ class SpatialIndex {
   }
 }
 
-function segmentHitsBox(first, second, box, inset = 3) {
+function segmentHitsBox(first, second, box, inset = 0) {
   const left = box.x + inset;
   const right = box.x + box.width - inset;
   const top = box.y + inset;
@@ -911,10 +1011,12 @@ function candidateScore(points, index, ignored, routeIndex, line) {
     }
     const candidate = { first, second };
     for (const routed of routeIndex.querySegment(first, second)) {
-      if (routed.line === line) continue;
+      if (routed.line === line || line.space === "overlay" || routed.line.space === "overlay") continue;
+      const clearance = bundleLaneClearance(line, routed.line);
+      if (clearance && parallelBundleLanesTooClose(candidate, routed, clearance)) score += 50000;
       const interaction = segmentInteraction(candidate, routed);
       if (interaction === "overlap" && !segmentsMayShareGeometry(line, routed.line, candidate, routed)) score += 50000;
-      if (interaction === "crossing") score += 180;
+      if (interaction === "crossing") score += CROSSING_PENALTY;
     }
   }
   return score + collisions * 100000;
@@ -969,7 +1071,7 @@ function overlappingRun(points, routeIndex, line) {
   for (let i = 1; i < points.length; i += 1) {
     const candidate = { first: points[i - 1], second: points[i] };
     for (const routed of routeIndex.querySegment(candidate.first, candidate.second)) {
-      if (routed.line === line) continue;
+      if (routed.line === line || line.space === "overlay" || routed.line.space === "overlay") continue;
       if (segmentInteraction(candidate, routed) === "overlap"
         && !segmentsMayShareGeometry(line, routed.line, candidate, routed)) return candidate;
     }
@@ -1041,6 +1143,33 @@ function shareGroupDock(group) {
   };
 }
 
+function adjacentGridGutterDistance(scene, dock) {
+  const owner = dock.owner;
+  const parent = owner?.parent;
+  if (parent?.layout?.kind !== "grid") return null;
+  const members = parent.children.filter((child) => !child.anchor && !child.frame);
+  const index = members.indexOf(owner);
+  if (index < 0) return null;
+  const columns = Math.max(1, Math.min(parent.layoutData?.columns ?? parent.columns ?? 1, members.length));
+  const column = index % columns;
+  const row = Math.floor(index / columns);
+  let key;
+  if (dock.side === "left" && column > 0) key = `mesh:grid-column-gap:${parent.path || "$root"}:${column - 1}`;
+  if (dock.side === "right" && column < columns - 1) key = `mesh:grid-column-gap:${parent.path || "$root"}:${column}`;
+  if (dock.side === "top" && row > 0) key = `mesh:grid-row-gap:${parent.path || "$root"}:${row - 1}`;
+  const rows = Math.ceil(members.length / columns);
+  if (dock.side === "bottom" && row < rows - 1) key = `mesh:grid-row-gap:${parent.path || "$root"}:${row}`;
+  const cell = key ? scene.channelCellByKey.get(key) : null;
+  if (!cell) return null;
+  const center = {
+    x: cell.geometry.x + cell.geometry.width / 2,
+    y: cell.geometry.y + cell.geometry.height / 2,
+  };
+  const vector = SIDE_VECTOR[dock.side];
+  const distance = (center.x - dock.point.x) * vector.x + (center.y - dock.point.y) * vector.y;
+  return distance > 0 ? distance : null;
+}
+
 function sharingPins(scene, objectIndex) {
   for (const line of scene.lines) {
     line.sharedPins = [];
@@ -1080,7 +1209,13 @@ function sharingPins(scene, objectIndex) {
     const minimumDistance = group.mode === "merge" && group.source.kind === "port-group"
       ? terminalDistance + ROUTE_CLEARANCE
       : 8;
-    const distance = Math.max(8, Math.min(Math.max(desired, minimumDistance), trackLimit, obstacleLimit));
+    const gutterDistance = group.mode === "bundle" && !group.branch
+      ? adjacentGridGutterDistance(scene, dock)
+      : null;
+    const preferredDistance = gutterDistance != null && gutterDistance >= terminalDistance
+      ? gutterDistance
+      : Math.max(desired, minimumDistance);
+    const distance = Math.max(8, Math.min(preferredDistance, trackLimit, obstacleLimit));
     if (group.mode === "merge") {
       const pin = { x: start.x + vector.x * distance, y: start.y + vector.y * distance };
       if (group.source.kind === "port-group") {
@@ -1217,6 +1352,16 @@ function isDirectGapCrossing(line, region) {
   return region.index >= start && region.index < end;
 }
 
+function requiresSharedGapLane(line, region) {
+  if (region.kind !== "gap") return false;
+  const authorsRegion = line.segments.some((segment) => segment.corridor
+    ? region.corridors.includes(segment.corridor)
+    : segment.region?.kind === "gap" && physicalGapContains(segment.region, region));
+  if (!authorsRegion) return false;
+  return (line.shareMemberships ?? []).some((membership) =>
+    membership.group.mode === "merge" || membership.group.mode === "bundle");
+}
+
 function insideOrSelf(object, ancestor) {
   return object === ancestor || hasAncestor(object, ancestor);
 }
@@ -1271,6 +1416,11 @@ function orderedPins(line, start, end) {
       continue;
     }
     if (track.region.kind === "gap" && explicitPaddingOwners.has(track.region.owner)) continue;
+    if (track.region.gridAxis && !track.crossing) {
+      const pin = { ...trackPoint(track, start, end), required: true };
+      groups.push({ phase: 1, rank: pinDistance(pin, start), pins: [pin] });
+      continue;
+    }
     if (explicitIndex >= 0) {
       const pin = trackPoint(track, start, end);
       // A sole authored gap between the endpoint branches is a crossing, not
@@ -1331,6 +1481,15 @@ function orderedPins(line, start, end) {
     .filter((sharingPin) => sharingPin.endpoint !== line.from)
     .sort((first, second) => (second.sequence ?? 0) - (first.sequence ?? 0))
     .map((sharingPin) => ({ ...sharingPin.pin, sharingGroup: sharingPin.group }));
+  const alignRegionPin = (pin, anchor) => {
+    if (!pin?.region || !pin.allocation || !anchor) return;
+    const geometry = regionGeometry(pin.region);
+    const [alongStart, alongEnd] = allocationAlongBounds(pin.allocation);
+    if (geometry.axis === "vertical") pin.y = Math.max(alongStart, Math.min(alongEnd, anchor.y));
+    else pin.x = Math.max(alongStart, Math.min(alongEnd, anchor.x));
+  };
+  alignRegionPin(pins[0], fromPins.at(-1));
+  alignRegionPin(pins.at(-1), toPins[0]);
   pins.unshift(...fromPins);
   pins.push(...toPins);
   return pins;
@@ -1385,6 +1544,53 @@ function endpointStub(line, endpoint) {
   const escapeDistance = Math.max(endpoint.escapeDistance ?? ROUTE_CLEARANCE, minimumRun);
   endpoint.routeEscapeDistance = escapeDistance;
   return [endpoint.point, escapePoint(endpoint, escapeDistance)];
+}
+
+function terminalRunIsValid(endpoint, adjacent) {
+  const vector = SIDE_VECTOR[endpoint.physicalSide] ?? { x: 0, y: 0 };
+  const delta = { x: adjacent.x - endpoint.point.x, y: adjacent.y - endpoint.point.y };
+  const normal = delta.x * vector.x + delta.y * vector.y;
+  const tangent = delta.x * vector.y - delta.y * vector.x;
+  return Math.abs(tangent) <= 0.001 && normal >= (endpoint.routeEscapeDistance ?? ROUTE_CLEARANCE) - 0.001;
+}
+
+function terminalNormalDistance(endpoint, point) {
+  const vector = SIDE_VECTOR[endpoint.physicalSide] ?? { x: 0, y: 0 };
+  return (point.x - endpoint.point.x) * vector.x + (point.y - endpoint.point.y) * vector.y;
+}
+
+function terminalBridge(first, second, side, escapeAtStart) {
+  if (first.x === second.x || first.y === second.y) return [first, second];
+  const horizontalNormal = side === "left" || side === "right";
+  const corner = horizontalNormal
+    ? escapeAtStart ? { x: second.x, y: first.y } : { x: first.x, y: second.y }
+    : escapeAtStart ? { x: first.x, y: second.y } : { x: second.x, y: first.y };
+  return [first, corner, second];
+}
+
+// The interior router may find an equal-cost L path that visits a dock before
+// its authored escape point. Loop removal must not turn that path into a
+// tangential arrival along the object edge. Rebuild only the terminal bridge;
+// all interior routing and authored pins remain untouched.
+function enforceTerminalStubs(line) {
+  for (const [endpoint, fromEnd] of [[line.from, true], [line.to, false]]) {
+    const adjacent = fromEnd ? line.route[1] : line.route.at(-2);
+    if (!endpoint?.point || !adjacent || terminalRunIsValid(endpoint, adjacent)) continue;
+    const escape = escapePoint(endpoint, endpoint.routeEscapeDistance);
+    if (fromEnd) {
+      let nextIndex = 1;
+      while (nextIndex < line.route.length - 1 && terminalNormalDistance(endpoint, line.route[nextIndex]) <= 0.001) nextIndex += 1;
+      const next = line.route[nextIndex];
+      const bridge = terminalBridge(escape, next, endpoint.physicalSide, true);
+      line.route = simplify([endpoint.point, ...bridge, ...line.route.slice(nextIndex + 1)], [escape]);
+    } else {
+      let previousIndex = line.route.length - 2;
+      while (previousIndex > 0 && terminalNormalDistance(endpoint, line.route[previousIndex]) <= 0.001) previousIndex -= 1;
+      const previous = line.route[previousIndex];
+      const bridge = terminalBridge(previous, escape, endpoint.physicalSide, false);
+      line.route = simplify([...line.route.slice(0, previousIndex), ...bridge, endpoint.point], [escape]);
+    }
+  }
 }
 
 // Docks sit on the box edge and stubs leave outward, so the endpoint boxes
@@ -1458,8 +1664,10 @@ function routeLine(line, index, routeIndex) {
           pins.push({ x: pin.x, y: clamp(y), required: pin.required });
         } else {
           const nextY = nextTravel.soft && nextTravel.region && regionGeometry(nextTravel.region).axis === "vertical" ? cursor.y : nextTravel.y;
+          const entryRequired = pin.required && !(pin.region.kind === "gap" && line.share?.group
+            && requiresSharedGapLane(line, pin.region));
           pins.push(
-            { x: pin.x, y: clamp(cursor.y), required: pin.required },
+            { x: pin.x, y: clamp(cursor.y), required: entryRequired },
             { x: pin.x, y: clamp(nextY), required: pin.required },
           );
         }
@@ -1480,8 +1688,10 @@ function routeLine(line, index, routeIndex) {
           pins.push({ x: clamp(x), y: pin.y, required: pin.required });
         } else {
           const nextX = nextTravel.soft && nextTravel.region && regionGeometry(nextTravel.region).axis === "horizontal" ? cursor.x : nextTravel.x;
+          const entryRequired = pin.required && !(pin.region.kind === "gap" && line.share?.group
+            && requiresSharedGapLane(line, pin.region));
           pins.push(
-            { x: clamp(cursor.x), y: pin.y, required: pin.required },
+            { x: clamp(cursor.x), y: pin.y, required: entryRequired },
             { x: clamp(nextX), y: pin.y, required: pin.required },
           );
         }
@@ -1495,23 +1705,36 @@ function routeLine(line, index, routeIndex) {
   // escape stubs count as pins so collapse keeps the perpendicular departure
   line.requiredRoutePins = pins.filter((pin) => pin.required).map((pin) => ({ x: pin.x, y: pin.y }));
   line.pinPoints = [...pins, ...fromStub.slice(1), ...toStub.slice(1)].map((pin) => ({ x: pin.x, y: pin.y }));
-  const waypoints = [...fromStub, ...pins, ...toStub.reverse()];
-  const route = [];
+  const waypoints = [start, ...pins, end];
+  const interiorRoute = [];
   for (let i = 1; i < waypoints.length; i += 1) {
     const ignored = ignoredObjects(line, index);
     const piece = orthogonal(waypoints[i - 1], waypoints[i], index, ignored, routeIndex, line);
-    route.push(...(route.length ? piece.slice(1) : piece));
+    for (let pieceIndex = 1; pieceIndex < piece.length; pieceIndex += 1) {
+      const candidate = { first: piece[pieceIndex - 1], second: piece[pieceIndex] };
+      for (const routed of routeIndex.querySegment(candidate.first, candidate.second)) {
+        if (routed.line !== line) authorizeSharedGeometry(line, routed.line, candidate, routed);
+      }
+    }
+    interiorRoute.push(...(interiorRoute.length ? piece.slice(1) : piece));
   }
+  const route = [fromStub[0], ...interiorRoute, toStub[0]];
   const required = line.requiredRoutePins ?? [];
+  const terminalPins = [...fromStub.slice(1), ...toStub.slice(1)];
+  const protectedPins = [...required, ...terminalPins];
   const loopFree = [];
   for (const routePoint of route) {
     const previousIndex = loopFree.findLastIndex((candidate) => samePoint(candidate, routePoint));
-    const loopContainsRequiredPin = previousIndex >= 0 && loopFree.slice(previousIndex + 1)
-      .some((candidate) => required.some((pin) => samePoint(candidate, pin)));
-    if (previousIndex >= 0 && !loopContainsRequiredPin) loopFree.splice(previousIndex + 1);
+    const loopContainsProtectedPin = previousIndex >= 0 && loopFree.slice(previousIndex + 1)
+      .some((candidate) => protectedPins.some((pin) => samePoint(candidate, pin)));
+    if (previousIndex >= 0 && !loopContainsProtectedPin) loopFree.splice(previousIndex + 1);
     else loopFree.push(routePoint);
   }
+  // A collinear escape needs no explicit vertex: the longer straight run
+  // already satisfies the terminal constraint. Non-collinear escapes survive
+  // simplification as bends and remain protected by line.pinPoints later.
   line.route = simplify(loopFree, required);
+  enforceTerminalStubs(line);
   materializeSharedPins(line);
 }
 
@@ -1630,6 +1853,7 @@ function materializeAuthorizedSharedRuns(scene) {
 }
 
 function indexRoute(routeIndex, line) {
+  if (line.space === "overlay") return;
   for (let index = 1; index < line.route.length; index += 1) {
     const first = line.route[index - 1];
     const second = line.route[index];
@@ -1802,6 +2026,621 @@ function improveRoutes(scene, index) {
     }
     if (!improved) break;
   }
+}
+
+function routeSegmentIndex(scene) {
+  const index = new SpatialIndex([]);
+  for (const line of scene.lines) {
+    if (line.space === "overlay") continue;
+    for (let segmentIndex = 1; segmentIndex < line.route.length; segmentIndex += 1) {
+      const first = line.route[segmentIndex - 1];
+      const second = line.route[segmentIndex];
+      index.insert({
+        line,
+        segmentIndex: segmentIndex - 1,
+        first,
+        second,
+        box: {
+          x: Math.min(first.x, second.x) - 2,
+          y: Math.min(first.y, second.y) - 2,
+          width: Math.abs(first.x - second.x) + 4,
+          height: Math.abs(first.y - second.y) + 4,
+        },
+      });
+    }
+  }
+  return index;
+}
+
+function bundleLaneClearance(firstLine, secondLine) {
+  for (const membership of firstLine.shareMemberships ?? []) {
+    if (membership.group.mode !== "bundle") continue;
+    const other = (secondLine.shareMemberships ?? [])
+      .find((candidate) => candidate.group === membership.group);
+    if (other && other.laneIndex !== membership.laneIndex) return ROUTE_CLEARANCE;
+  }
+  return 0;
+}
+
+function parallelBundleLanesTooClose(first, second, clearance) {
+  const firstHorizontal = first.first.y === first.second.y;
+  const secondHorizontal = second.first.y === second.second.y;
+  if (firstHorizontal !== secondHorizontal) return false;
+  if (firstHorizontal) {
+    const overlap = Math.min(Math.max(first.first.x, first.second.x), Math.max(second.first.x, second.second.x))
+      - Math.max(Math.min(first.first.x, first.second.x), Math.min(second.first.x, second.second.x));
+    return overlap > 2 && Math.abs(first.first.y - second.first.y) < clearance - 0.001;
+  }
+  const overlap = Math.min(Math.max(first.first.y, first.second.y), Math.max(second.first.y, second.second.y))
+    - Math.max(Math.min(first.first.y, first.second.y), Math.min(second.first.y, second.second.y));
+  return overlap > 2 && Math.abs(first.first.x - second.first.x) < clearance - 0.001;
+}
+
+function crossingDetails(line, points, routeIndex) {
+  const crossings = new Map();
+  let unexpectedOverlap = false;
+  for (let index = 1; index < points.length; index += 1) {
+    const candidate = { first: points[index - 1], second: points[index] };
+    const nearby = routeIndex.queryBox({
+      x: Math.min(candidate.first.x, candidate.second.x) - ROUTE_CLEARANCE,
+      y: Math.min(candidate.first.y, candidate.second.y) - ROUTE_CLEARANCE,
+      width: Math.abs(candidate.first.x - candidate.second.x) + ROUTE_CLEARANCE * 2,
+      height: Math.abs(candidate.first.y - candidate.second.y) + ROUTE_CLEARANCE * 2,
+    });
+    for (const routed of nearby) {
+      if (routed.line === line || line.space === "overlay" || routed.line.space === "overlay") continue;
+      const clearance = bundleLaneClearance(line, routed.line);
+      if (clearance && parallelBundleLanesTooClose(candidate, routed, clearance)) unexpectedOverlap = true;
+      const interaction = segmentInteraction(candidate, routed);
+      if (interaction === "overlap" && !segmentsMayShareGeometry(line, routed.line, candidate, routed)) {
+        unexpectedOverlap = true;
+      }
+      if (interaction !== "crossing") continue;
+      const horizontal = candidate.first.y === candidate.second.y ? candidate : routed;
+      const vertical = horizontal === candidate ? routed : candidate;
+      const x = vertical.first.x;
+      const y = horizontal.first.y;
+      crossings.set(`${routed.line.id}:${routed.segmentIndex}:${Math.round(x * 1000)}:${Math.round(y * 1000)}`, {
+        line: routed.line,
+        segment: routed,
+        x,
+        y,
+      });
+    }
+  }
+  return { crossings: [...crossings.values()], unexpectedOverlap };
+}
+
+function routeLengthAndBends(points) {
+  let length = 0;
+  let bends = 0;
+  for (let index = 1; index < points.length; index += 1) {
+    length += Math.abs(points[index].x - points[index - 1].x) + Math.abs(points[index].y - points[index - 1].y);
+    if (index < 2) continue;
+    const previousHorizontal = points[index - 2].y === points[index - 1].y;
+    const currentHorizontal = points[index - 1].y === points[index].y;
+    if (previousHorizontal !== currentHorizontal) bends += 1;
+  }
+  return { length, bends };
+}
+
+function boundedRefinementCoordinates(values, preferred, limit = 18) {
+  const sorted = [...new Set(values.filter(Number.isFinite).map((value) => Math.round(value * 2) / 2))]
+    .sort((first, second) => Math.abs(first - preferred) - Math.abs(second - preferred) || first - second);
+  if (sorted.length <= limit) return sorted;
+  const extremes = [...sorted].sort((first, second) => first - second);
+  return [...new Set([...sorted.slice(0, limit - 4), ...extremes.slice(0, 2), ...extremes.slice(-2)])];
+}
+
+function commonAncestor(first, second) {
+  const firstAncestors = new Set();
+  for (let current = first; current; current = current.parent) firstAncestors.add(current);
+  for (let current = second; current; current = current.parent) if (firstAncestors.has(current)) return current;
+  return null;
+}
+
+function refinementCandidate(points, line) {
+  const required = line.requiredRoutePins ?? [];
+  return simplify(points, required);
+}
+
+function crossingRefinementCandidates(scene, line, objectIndex, routeIndex, currentCrossings) {
+  const start = escapePoint(line.from, line.from.routeEscapeDistance);
+  const end = escapePoint(line.to, line.to.routeEscapeDistance);
+  const lca = commonAncestor(line.from.object, line.to.object) ?? scene.root;
+  const searchBox = {
+    x: Math.min(...line.route.map((point) => point.x)) - 96,
+    y: Math.min(...line.route.map((point) => point.y)) - 96,
+    width: Math.max(...line.route.map((point) => point.x)) - Math.min(...line.route.map((point) => point.x)) + 192,
+    height: Math.max(...line.route.map((point) => point.y)) - Math.min(...line.route.map((point) => point.y)) + 192,
+  };
+  const nearby = [...objectIndex.queryBox(searchBox)].filter((object) => !ignoredObjects(line, objectIndex).has(object));
+  const xValues = [start.x, end.x, ...line.route.map((point) => point.x)];
+  const yValues = [start.y, end.y, ...line.route.map((point) => point.y)];
+  for (const crossing of currentCrossings) {
+    xValues.push(crossing.segment.first.x - 8, crossing.segment.first.x + 8, crossing.segment.second.x - 8, crossing.segment.second.x + 8);
+    yValues.push(crossing.segment.first.y - 8, crossing.segment.first.y + 8, crossing.segment.second.y - 8, crossing.segment.second.y + 8);
+    for (const point of crossing.line.route) {
+      xValues.push(point.x - ROUTE_CLEARANCE, point.x + ROUTE_CLEARANCE);
+      yValues.push(point.y - ROUTE_CLEARANCE, point.y + ROUTE_CLEARANCE);
+    }
+  }
+  for (const object of nearby) {
+    xValues.push(object.box.x - ROUTE_CLEARANCE, object.box.x + object.box.width + ROUTE_CLEARANCE);
+    yValues.push(object.box.y - ROUTE_CLEARANCE, object.box.y + object.box.height + ROUTE_CLEARANCE);
+  }
+  if (lca?.box) {
+    xValues.push(lca.box.x - ROUTE_CLEARANCE, lca.box.x + lca.box.width + ROUTE_CLEARANCE);
+    yValues.push(lca.box.y - ROUTE_CLEARANCE, lca.box.y + lca.box.height + ROUTE_CLEARANCE);
+  }
+  const xs = boundedRefinementCoordinates(xValues, (start.x + end.x) / 2);
+  const ys = boundedRefinementCoordinates(yValues, (start.y + end.y) / 2);
+  const candidates = [];
+  const compose = (interior) => candidates.push(refinementCandidate([
+    line.from.point,
+    start,
+    ...interior,
+    end,
+    line.to.point,
+  ], line));
+  for (const x of xs) compose([{ x, y: start.y }, { x, y: end.y }]);
+  for (const y of ys) compose([{ x: start.x, y }, { x: end.x, y }]);
+
+  const allocations = [...new Set([...(line.regionTracks?.values() ?? [])].map((track) => track.allocation))].filter(Boolean);
+  const vertical = allocations.filter((allocation) => allocation.axis === "vertical").map((allocation) => allocation.coordinate);
+  const horizontal = allocations.filter((allocation) => allocation.axis === "horizontal").map((allocation) => allocation.coordinate);
+  const sourceX = [...vertical].sort((first, second) => Math.abs(first - start.x) - Math.abs(second - start.x))[0];
+  const targetX = [...vertical].sort((first, second) => Math.abs(first - end.x) - Math.abs(second - end.x))[0];
+  const sourceY = [...horizontal].sort((first, second) => Math.abs(first - start.y) - Math.abs(second - start.y))[0];
+  const targetY = [...horizontal].sort((first, second) => Math.abs(first - end.y) - Math.abs(second - end.y))[0];
+  if (sourceX != null && targetX != null) {
+    for (const y of ys) compose([
+      { x: sourceX, y: start.y },
+      { x: sourceX, y },
+      { x: targetX, y },
+      { x: targetX, y: end.y },
+    ]);
+    if (lca?.box) {
+      for (const y of [lca.box.y - ROUTE_CLEARANCE, lca.box.y + lca.box.height + ROUTE_CLEARANCE]) {
+        for (const x of [lca.box.x - ROUTE_CLEARANCE, lca.box.x + lca.box.width + ROUTE_CLEARANCE]) {
+          compose([
+            { x: sourceX, y: start.y },
+            { x: sourceX, y },
+            { x, y },
+            { x, y: end.y },
+          ]);
+        }
+      }
+    }
+  }
+  if (sourceY != null && targetY != null) {
+    for (const x of xs) compose([
+      { x: start.x, y: sourceY },
+      { x, y: sourceY },
+      { x, y: targetY },
+      { x: end.x, y: targetY },
+    ]);
+  }
+  return candidates;
+}
+
+function candidateHitsObstacle(points, objectIndex, ignored) {
+  for (let index = 1; index < points.length; index += 1) {
+    for (const object of objectIndex.querySegment(points[index - 1], points[index])) {
+      if (ignored.has(object) || !segmentHitsBox(points[index - 1], points[index], object.box)) continue;
+      if (object.kind === "boundary-label" && points[index - 1].x === points[index].x) continue;
+      return true;
+    }
+  }
+  return false;
+}
+
+function hasNestedAuthoredItinerary(line) {
+  if (line.segments.filter((segment) => segment.region || segment.corridor || segment.waypoint).length > 1) return true;
+  const explicitBundle = (line.shareMemberships ?? []).some((membership) =>
+    membership.group.mode === "bundle" && membership.group.source.kind === "explicit");
+  if (explicitBundle) return false;
+  const allocations = new Set([...(line.regionTracks?.values() ?? [])]
+    .filter((track) => !track.crossing)
+    .map((track) => track.allocation)
+    .filter(Boolean));
+  return allocations.size > 1;
+}
+
+function refinementGridCoordinates(scene, line, objectIndex, routeIndex, currentCrossings, start, end) {
+  const lca = commonAncestor(line.from.object, line.to.object) ?? scene.root;
+  const ignored = ignoredObjects(line, objectIndex);
+  const xValues = [start.x, end.x, ...line.route.map((point) => point.x)];
+  const yValues = [start.y, end.y, ...line.route.map((point) => point.y)];
+  const crossingXValues = [];
+  const crossingYValues = [];
+  const bundleXValues = [];
+  const bundleYValues = [];
+  for (const crossing of currentCrossings) {
+    for (const point of crossing.line.route) {
+      xValues.push(point.x - ROUTE_CLEARANCE, point.x + ROUTE_CLEARANCE);
+      yValues.push(point.y - ROUTE_CLEARANCE, point.y + ROUTE_CLEARANCE);
+      crossingXValues.push(point.x - ROUTE_CLEARANCE, point.x + ROUTE_CLEARANCE);
+      crossingYValues.push(point.y - ROUTE_CLEARANCE, point.y + ROUTE_CLEARANCE);
+    }
+  }
+  const search = lca?.box ?? {
+    x: Math.min(start.x, end.x),
+    y: Math.min(start.y, end.y),
+    width: Math.abs(start.x - end.x),
+    height: Math.abs(start.y - end.y),
+  };
+  for (const object of objectIndex.queryBox(search)) {
+    if (ignored.has(object)) continue;
+    xValues.push(object.box.x - ROUTE_CLEARANCE, object.box.x + object.box.width + ROUTE_CLEARANCE);
+    yValues.push(object.box.y - ROUTE_CLEARANCE, object.box.y + object.box.height + ROUTE_CLEARANCE);
+  }
+  for (const routed of routeIndex.queryBox(search)) {
+    if (!bundleLaneClearance(line, routed.line)) continue;
+    for (const point of [routed.first, routed.second]) {
+      bundleXValues.push(point.x - ROUTE_CLEARANCE, point.x + ROUTE_CLEARANCE);
+      bundleYValues.push(point.y - ROUTE_CLEARANCE, point.y + ROUTE_CLEARANCE);
+    }
+  }
+  for (const track of line.regionTracks?.values() ?? []) {
+    const allocation = track.allocation;
+    if (!allocation) continue;
+    if (allocation.axis === "vertical") xValues.push(allocation.coordinate);
+    else yValues.push(allocation.coordinate);
+  }
+  if (lca?.box) {
+    xValues.push(lca.box.x - ROUTE_CLEARANCE, lca.box.x + lca.box.width + ROUTE_CLEARANCE);
+    yValues.push(lca.box.y - ROUTE_CLEARANCE, lca.box.y + lca.box.height + ROUTE_CLEARANCE);
+  }
+  const preferredX = (start.x + end.x) / 2;
+  const preferredY = (start.y + end.y) / 2;
+  return {
+    start,
+    end,
+    xs: [...new Set([...boundedRefinementCoordinates(xValues, preferredX, 28),
+      ...boundedRefinementCoordinates(crossingXValues, preferredX, 16),
+      ...boundedRefinementCoordinates(bundleXValues, preferredX, 16), start.x, end.x])]
+      .sort((first, second) => first - second),
+    ys: [...new Set([...boundedRefinementCoordinates(yValues, preferredY, 28),
+      ...boundedRefinementCoordinates(crossingYValues, preferredY, 16),
+      ...boundedRefinementCoordinates(bundleYValues, preferredY, 16), start.y, end.y])]
+      .sort((first, second) => first - second),
+  };
+}
+
+function segmentWithinSharedRun(first, second, run) {
+  const horizontal = first.y === second.y;
+  if (horizontal !== (run.first.y === run.second.y)) return false;
+  if (horizontal) {
+    return first.y === run.first.y
+      && Math.min(first.x, second.x) >= Math.min(run.first.x, run.second.x)
+      && Math.max(first.x, second.x) <= Math.max(run.first.x, run.second.x);
+  }
+  return first.x === run.first.x
+    && Math.min(first.y, second.y) >= Math.min(run.first.y, run.second.y)
+    && Math.max(first.y, second.y) <= Math.max(run.first.y, run.second.y);
+}
+
+function existingSharedTerminalPath(line, endpoint) {
+  const runs = (line.shareMemberships ?? []).filter((membership) => membership.group.mode === "merge")
+    .flatMap((membership) => membership.group.allowedSharedRuns ?? [])
+    .filter((run) => (run.members ?? []).includes(line));
+  if (!runs.length) return null;
+  const points = endpoint === line.from ? line.route : [...line.route].reverse();
+  const shared = [points[0]];
+  for (let index = 1; index < points.length; index += 1) {
+    if (!runs.some((run) => segmentWithinSharedRun(points[index - 1], points[index], run))) break;
+    shared.push(points[index]);
+  }
+  return shared.length > 1 ? shared : null;
+}
+
+function pushRefinementState(heap, state) {
+  heap.push(state);
+  for (let index = heap.length - 1; index > 0;) {
+    const parent = Math.floor((index - 1) / 2);
+    if (heap[parent].cost <= heap[index].cost) break;
+    [heap[parent], heap[index]] = [heap[index], heap[parent]];
+    index = parent;
+  }
+}
+
+function popRefinementState(heap) {
+  const first = heap[0];
+  const last = heap.pop();
+  if (heap.length) {
+    heap[0] = last;
+    for (let index = 0;;) {
+      const left = index * 2 + 1;
+      const right = left + 1;
+      let next = index;
+      if (left < heap.length && heap[left].cost < heap[next].cost) next = left;
+      if (right < heap.length && heap[right].cost < heap[next].cost) next = right;
+      if (next === index) break;
+      [heap[index], heap[next]] = [heap[next], heap[index]];
+      index = next;
+    }
+  }
+  return first;
+}
+
+function refinementGridPiece(scene, line, objectIndex, routeIndex, currentCrossings, start, end) {
+  const { xs, ys } = refinementGridCoordinates(scene, line, objectIndex, routeIndex, currentCrossings, start, end);
+  const startX = xs.indexOf(start.x);
+  const startY = ys.indexOf(start.y);
+  const endX = xs.indexOf(end.x);
+  const endY = ys.indexOf(end.y);
+  if (startX < 0 || startY < 0 || endX < 0 || endY < 0) return null;
+  const ignored = ignoredObjects(line, objectIndex);
+  const key = (x, y, direction) => `${x}:${y}:${direction}`;
+  const states = new Map();
+  const heap = [];
+  const initial = { x: startX, y: startY, direction: 0, cost: 0, previous: null };
+  states.set(key(initial.x, initial.y, initial.direction), initial);
+  pushRefinementState(heap, initial);
+  let result = null;
+  while (heap.length) {
+    const current = popRefinementState(heap);
+    if (states.get(key(current.x, current.y, current.direction)) !== current) continue;
+    if (current.x === endX && current.y === endY) {
+      result = current;
+      break;
+    }
+    for (const [deltaX, deltaY, direction] of [[-1, 0, 1], [1, 0, 1], [0, -1, 2], [0, 1, 2]]) {
+      const x = current.x + deltaX;
+      const y = current.y + deltaY;
+      if (x < 0 || x >= xs.length || y < 0 || y >= ys.length) continue;
+      const first = { x: xs[current.x], y: ys[current.y] };
+      const second = { x: xs[x], y: ys[y] };
+      if (candidateHitsObstacle([first, second], objectIndex, ignored)) continue;
+      const details = crossingDetails(line, [first, second], routeIndex);
+      if (details.unexpectedOverlap) continue;
+      const bend = current.direction && current.direction !== direction ? 18 : 0;
+      const length = Math.abs(first.x - second.x) + Math.abs(first.y - second.y);
+      const cost = current.cost + details.crossings.length * 1_000_000 + bend + length;
+      const stateKey = key(x, y, direction);
+      if (states.get(stateKey)?.cost <= cost) continue;
+      const next = { x, y, direction, cost, previous: current };
+      states.set(stateKey, next);
+      pushRefinementState(heap, next);
+    }
+  }
+  if (!result) return null;
+  const points = [];
+  for (let current = result; current; current = current.previous) points.push({ x: xs[current.x], y: ys[current.y] });
+  points.reverse();
+  return points;
+}
+
+// Find one bounded visibility-grid route through coordinates derived from the
+// current route, crossed routes, local obstacles, and the common ancestor.
+// Required corridor pins split the search into independently bounded pieces;
+// this preserves authored topology without disabling collision repair.
+function refinementGridRoute(scene, line, objectIndex, routeIndex, currentCrossings) {
+  const fromShared = existingSharedTerminalPath(line, line.from);
+  const toShared = existingSharedTerminalPath(line, line.to);
+  const fromFixed = fromShared ?? [line.from.point, escapePoint(line.from, line.from.routeEscapeDistance)];
+  const toFixed = toShared ? [...toShared].reverse() : [escapePoint(line.to, line.to.routeEscapeDistance), line.to.point];
+  const required = (line.requiredRoutePins ?? []).filter((pin) =>
+    !routeContainsPoint(fromFixed, pin) && !routeContainsPoint(toFixed, pin));
+  const waypoints = [fromFixed.at(-1), ...required, toFixed[0]]
+    .filter((point, index, points) => index === 0 || !samePoint(point, points[index - 1]));
+  const interior = [waypoints[0]];
+  for (let index = 1; index < waypoints.length; index += 1) {
+    const piece = refinementGridPiece(scene, line, objectIndex, routeIndex, currentCrossings,
+      waypoints[index - 1], waypoints[index]);
+    if (!piece) return null;
+    interior.push(...piece.slice(1));
+  }
+  return refinementCandidate([...fromFixed, ...interior.slice(1), ...toFixed.slice(1)], line);
+}
+
+function routeContainsRequiredPins(line, points) {
+  return (line.requiredRoutePins ?? []).every((pin) => routeContainsPoint(points, pin));
+}
+
+function routeContainsSharedRun(points, run) {
+  const horizontal = run.first.y === run.second.y;
+  return points.slice(1).some((second, index) => {
+    const first = points[index];
+    if (horizontal) {
+      return first.y === second.y && first.y === run.first.y
+        && Math.min(first.x, second.x) <= Math.min(run.first.x, run.second.x)
+        && Math.max(first.x, second.x) >= Math.max(run.first.x, run.second.x);
+    }
+    return first.x === second.x && first.x === run.first.x
+      && Math.min(first.y, second.y) <= Math.min(run.first.y, run.second.y)
+      && Math.max(first.y, second.y) >= Math.max(run.first.y, run.second.y);
+  });
+}
+
+function preservesExistingSharedTerminalRuns(line, points) {
+  for (const membership of line.shareMemberships ?? []) {
+    if (membership.group.mode !== "merge") continue;
+    for (const run of membership.group.allowedSharedRuns ?? []) {
+      if ((run.members ?? []).includes(line) && !routeContainsSharedRun(points, run)) return false;
+    }
+  }
+  return true;
+}
+
+function normalizedRefinementCandidate(line, points) {
+  const candidate = { ...line, route: points.map((point) => ({ ...point })) };
+  // Repairing the target bridge can invalidate the source bridge when the
+  // candidate approaches the target from behind it. A second fixed pass
+  // produces the same terminal geometry that will be committed later.
+  enforceTerminalStubs(candidate);
+  enforceTerminalStubs(candidate);
+  materializeSharedPins(candidate);
+  return candidate.route;
+}
+
+// A route is refined against already committed geometry before it enters the
+// route index. This preserves a planar lane that is available now instead of
+// letting a later bundle member occupy it and turn a local repair into a
+// coupled multi-line search.
+function refineIncrementalRoute(scene, line, objectIndex, routeIndex) {
+  const explicitBundle = (line.shareMemberships ?? []).some((membership) =>
+    membership.group.mode === "bundle" && membership.group.source.kind === "explicit");
+  if (!explicitBundle) return false;
+  const ignored = ignoredObjects(line, objectIndex);
+  const current = crossingDetails(line, line.route, routeIndex);
+  const currentHitsObstacle = candidateHitsObstacle(line.route, objectIndex, ignored);
+  if (!currentHitsObstacle && !current.unexpectedOverlap && !current.crossings.length) return false;
+
+  let best = line.route;
+  let bestHitsObstacle = currentHitsObstacle;
+  let bestUnexpectedOverlap = current.unexpectedOverlap;
+  let bestCrossings = current.crossings.length;
+  let bestGeometry = routeLengthAndBends(best);
+  const candidates = crossingRefinementCandidates(scene, line, objectIndex, routeIndex, current.crossings);
+  const grid = refinementGridRoute(scene, line, objectIndex, routeIndex, current.crossings);
+  if (grid) candidates.unshift(grid);
+  for (const rawCandidate of candidates) {
+    const candidate = normalizedRefinementCandidate(line, rawCandidate);
+    if (!routeContainsRequiredPins(line, candidate)
+      || !preservesExistingSharedTerminalRuns(line, candidate)
+      || candidateHitsObstacle(candidate, objectIndex, ignored)) continue;
+    const details = crossingDetails(line, candidate, routeIndex);
+    if (details.unexpectedOverlap) continue;
+    const geometry = routeLengthAndBends(candidate);
+    const better = bestHitsObstacle
+      || bestUnexpectedOverlap
+      || details.crossings.length < bestCrossings
+      || details.crossings.length === bestCrossings
+        && geometry.length + geometry.bends * 18 < bestGeometry.length + bestGeometry.bends * 18 - 0.5;
+    if (!better) continue;
+    best = candidate;
+    bestHitsObstacle = false;
+    bestUnexpectedOverlap = false;
+    bestCrossings = details.crossings.length;
+    bestGeometry = geometry;
+  }
+  const improvesValidity = currentHitsObstacle && !bestHitsObstacle
+    || current.unexpectedOverlap && !bestUnexpectedOverlap;
+  if (!improvesValidity && bestCrossings >= current.crossings.length) return false;
+  line.route = best;
+  enforceTerminalStubs(line);
+  materializeSharedPins(line);
+  return true;
+}
+
+// Crossing refinement is deliberately bounded: two passes per topology
+// sweep, at most eight affected lines per pass, and a constant local candidate set per line. The
+// spatial index keeps the sparse case near O(S log S + K) without an
+// all-lines permutation or an unbounded grid search.
+function refineRouteCrossings(scene, objectIndex) {
+  const maximumLinesPerPass = 8;
+  for (let pass = 0; pass < 2; pass += 1) {
+    let changed = false;
+    const initialIndex = routeSegmentIndex(scene);
+    const affected = scene.lines.map((line, order) => {
+      const details = crossingDetails(line, line.route, initialIndex);
+      const hitsObstacle = candidateHitsObstacle(line.route, objectIndex, ignoredObjects(line, objectIndex));
+      return { line, order, details, hitsObstacle };
+    }).filter((entry) => entry.line.space !== "overlay"
+      && !hasNestedAuthoredItinerary(entry.line)
+      && (entry.details.crossings.length || entry.details.unexpectedOverlap || entry.hitsObstacle))
+      .sort((first, second) => Number(second.hitsObstacle) - Number(first.hitsObstacle)
+        || Number(second.details.unexpectedOverlap) - Number(first.details.unexpectedOverlap)
+        || second.details.crossings.length - first.details.crossings.length
+        || second.line.route.length - first.line.route.length
+        || second.order - first.order)
+      .slice(0, maximumLinesPerPass);
+    for (const entry of affected) {
+      const routeIndex = routeSegmentIndex(scene);
+      const current = crossingDetails(entry.line, entry.line.route, routeIndex);
+      let best = entry.line.route;
+      let bestHitsObstacle = candidateHitsObstacle(best, objectIndex, ignoredObjects(entry.line, objectIndex));
+      let bestUnexpectedOverlap = current.unexpectedOverlap;
+      let bestCrossings = current.crossings.length;
+      let bestGeometry = routeLengthAndBends(best);
+      let bestCost = bestGeometry.length + bestGeometry.bends * 18 + bestCrossings * CROSSING_REFINEMENT_PENALTY;
+      const currentCost = bestCost;
+      const ignored = ignoredObjects(entry.line, objectIndex);
+      const grid = refinementGridRoute(scene, entry.line, objectIndex, routeIndex, current.crossings);
+      const candidates = crossingRefinementCandidates(scene, entry.line, objectIndex, routeIndex, current.crossings);
+      if (grid) candidates.unshift(grid);
+      for (const rawCandidate of candidates) {
+        const candidate = normalizedRefinementCandidate(entry.line, rawCandidate);
+        const pins = routeContainsRequiredPins(entry.line, candidate);
+        const shared = preservesExistingSharedTerminalRuns(entry.line, candidate);
+        const obstacle = candidateHitsObstacle(candidate, objectIndex, ignored);
+        if (!pins || !shared || obstacle) continue;
+        const details = crossingDetails(entry.line, candidate, routeIndex);
+        if (details.unexpectedOverlap) continue;
+        const geometry = routeLengthAndBends(candidate);
+        const cost = geometry.length + geometry.bends * 18 + details.crossings.length * CROSSING_REFINEMENT_PENALTY;
+        const better = bestHitsObstacle
+          || bestUnexpectedOverlap
+          || details.crossings.length <= bestCrossings && cost < bestCost - 0.5;
+        if (!better) continue;
+        best = candidate;
+        bestHitsObstacle = false;
+        bestUnexpectedOverlap = false;
+        bestCrossings = details.crossings.length;
+        bestGeometry = geometry;
+        bestCost = cost;
+      }
+      const improvesValidity = entry.hitsObstacle && !bestHitsObstacle
+        || current.unexpectedOverlap && !bestUnexpectedOverlap;
+      if (!improvesValidity && (bestCrossings >= current.crossings.length || bestCost >= currentCost - 0.5)) continue;
+      entry.line.route = best;
+      enforceTerminalStubs(entry.line);
+      materializeSharedPins(entry.line);
+      changed = true;
+    }
+    if (!changed) break;
+  }
+}
+
+function endpointRouteExcursion(line, endpoint) {
+  const points = endpoint === line.from ? line.route : [...line.route].reverse();
+  const axis = endpoint.physicalSide === "left" || endpoint.physicalSide === "right" ? "y" : "x";
+  for (const point of points) {
+    const delta = point[axis] - endpoint.point[axis];
+    if (Math.abs(delta) > 0.5) return Math.sign(delta);
+  }
+  return 0;
+}
+
+// When equal remote projections leave same-side docks tied, the first route
+// excursion provides the missing planar order: upward/leftward routes precede
+// direct routes, which precede downward/rightward routes. Only crossing-
+// involved, independent docks participate; authored PortGroup order is kept.
+function repairCrossingDockOrder(scene) {
+  const crossingIndex = routeSegmentIndex(scene);
+  const crossingLines = new Set(scene.lines.filter((line) => crossingDetails(line, line.route, crossingIndex).crossings.length));
+  const groups = new Map();
+  for (const [lineOrder, line] of scene.lines.entries()) {
+    for (const endpoint of [line.from, line.to]) {
+      if (!crossingLines.has(line) || !endpoint?.point || endpoint.port?.group) continue;
+      if ((endpoint.port?.attachments.length ?? 1) > 1) continue;
+      const target = dockTarget(endpoint);
+      const key = `${target.path}:${endpoint.physicalSide}`;
+      const entries = groups.get(key) ?? [];
+      entries.push({ line, lineOrder, endpoint, target });
+      groups.set(key, entries);
+    }
+  }
+  let changed = false;
+  for (const entries of groups.values()) {
+    if (entries.length < 2) continue;
+    const axis = entries[0].endpoint.physicalSide === "left" || entries[0].endpoint.physicalSide === "right" ? "y" : "x";
+    const slots = entries.map((entry) => entry.endpoint.point[axis]).sort((first, second) => first - second);
+    const desired = [...entries].sort((first, second) => endpointRouteExcursion(first.line, first.endpoint) - endpointRouteExcursion(second.line, second.endpoint)
+      || remoteCenter(first.line, first.endpoint)[axis] - remoteCenter(second.line, second.endpoint)[axis]
+      || first.lineOrder - second.lineOrder
+      || first.line.id.localeCompare(second.line.id));
+    desired.forEach((entry, index) => {
+      const coordinate = slots[index];
+      if (Math.abs(entry.endpoint.point[axis] - coordinate) <= 0.5) return;
+      entry.endpoint.point[axis] = coordinate;
+      if (entry.endpoint.port) entry.endpoint.port.point[axis] = coordinate;
+      changed = true;
+    });
+  }
+  return changed;
 }
 
 function routeSegments(route) {
@@ -2279,8 +3118,9 @@ export function route(scene) {
   sharingPins(scene, index);
   const routeAll = () => {
     const routeIndex = new SpatialIndex([]);
-    for (const line of scene.lines) {
+    for (const line of linesInRoutingOrder(scene)) {
       routeLine(line, index, routeIndex);
+      refineIncrementalRoute(scene, line, index, routeIndex);
       indexRoute(routeIndex, line);
     }
   };
@@ -2294,7 +3134,15 @@ export function route(scene) {
     sharingPins(scene, index);
     routeAll();
   }
+  if (alignExplicitBundleLaneOrder(scene)) {
+    sharingPins(scene, index);
+    routeAll();
+  }
   improveRoutes(scene, index);
+  if (repairCrossingDockOrder(scene)) {
+    routeAll();
+    improveRoutes(scene, index);
+  }
   // Sliding a dock changes the endpoint geometry from which all soft corridor
   // pins were derived. Rebuild routes after every bounded slide pass instead
   // of leaving the old dock coordinate behind as a protected pin.
@@ -2302,8 +3150,21 @@ export function route(scene) {
     routeAll();
     improveRoutes(scene, index);
   }
-  for (const line of scene.lines) materializeSharedPins(line);
-  materializeAuthorizedSharedRuns(scene);
+  // The first fixed sweep may change a merge's actual terminal prefix. Record
+  // that topology before the second sweep so compatible merge members can be
+  // refined without weakening their canonical shared run.
+  for (let sweep = 0; sweep < 2; sweep += 1) {
+    refineRouteCrossings(scene, index);
+    if (alignExplicitBundleLaneOrder(scene)) {
+      sharingPins(scene, index);
+      routeAll();
+    }
+    for (const line of scene.lines) {
+      enforceTerminalStubs(line);
+      materializeSharedPins(line);
+    }
+    materializeAuthorizedSharedRuns(scene);
+  }
   const labelObstacles = scene.objects.filter((object) => object.visible
     && !object.frame
     && (object.children.length === 0 || ["title", "subtitle", "legend-item"].includes(object.kind)));

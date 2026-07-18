@@ -84,5 +84,8 @@
   <rect x="790" y="470" width="290" height="40" rx="12" class="note"/>
   <text x="935" y="495" text-anchor="middle" class="small">activation = object + extent(from, to)</text>
 
-  <text x="600" y="590" text-anchor="middle" class="small muted">Occurrences exist only where a lifeline participates. Per message: one line and one align constraint; consecutive messages chain with spatial order. Fragments become frames over their occurrences.</text>
+  <text x="600" y="570" text-anchor="middle" class="small muted">
+    <tspan x="600">Occurrences exist only where a lifeline participates. Per message: one line and one align constraint;</tspan>
+    <tspan x="600" dy="22">consecutive messages chain with spatial order. Fragments become frames over their occurrences.</tspan>
+  </text>
 </svg>

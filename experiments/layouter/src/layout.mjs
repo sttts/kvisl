@@ -97,10 +97,9 @@ export function lineLabelDemand(line, axis, text = null) {
     + Math.max(0, texts.length - 1) * 4 + 12;
 }
 
-function physicalGapRegions(first, second, regions, options = {}) {
+function physicalGapRegions(first, second, regions) {
   if (!first || !second || first.parent !== second.parent) return [];
   const owner = first.parent;
-  if (options.implicit && effectiveLayout(owner) === "grid") return [];
   const firstIndex = first.layoutIndex;
   const secondIndex = second.layoutIndex;
   const start = Math.min(firstIndex, secondIndex);
@@ -114,9 +113,109 @@ function physicalGapRegions(first, second, regions, options = {}) {
   return result;
 }
 
+function gridGapRegion(owner, axis, index, regions) {
+  const key = regionKey(`grid-${axis}-gap`, owner, index);
+  if (!regions.has(key)) {
+    regions.set(key, {
+      key,
+      kind: "gap",
+      gridAxis: axis,
+      owner,
+      index,
+      entries: [],
+      entryLines: new Set(),
+      corridors: [],
+    });
+  }
+  return regions.get(key);
+}
+
+function declaredEndpointSide(endpoint) {
+  const sides = endpoint?.port?.allowedSides ?? [];
+  return sides.length === 1 ? sides[0] : null;
+}
+
+function adjacentGridGap(position, toward, count, side, positiveSide, negativeSide) {
+  if (side === positiveSide && position < count - 1) return position;
+  if (side === negativeSide && position > 0) return position - 1;
+  if (toward > position) return position;
+  if (toward < position) return position - 1;
+  return position < count - 1 ? position : position - 1;
+}
+
+function implicitGridRegions(line, owner, fromBranch, toBranch, regions) {
+  // Shared trunks and bundle cohorts own their common channel itinerary. A
+  // per-line implicit grid track would pre-split that topology and can force
+  // a member through a gutter the group never selected.
+  if ((line.shareMemberships ?? []).some((membership) =>
+    membership.group.mode === "merge" || membership.group.mode === "bundle")) return [];
+  const members = owner.children.filter((child) => !child.anchor && !child.frame);
+  const columns = Math.max(1, Math.min(owner.columns ?? 1, members.length));
+  const rows = Math.ceil(members.length / columns);
+  const fromIndex = members.indexOf(fromBranch);
+  const toIndex = members.indexOf(toBranch);
+  if (fromIndex < 0 || toIndex < 0) return [];
+  const fromColumn = fromIndex % columns;
+  const toColumn = toIndex % columns;
+  const fromRow = Math.floor(fromIndex / columns);
+  const toRow = Math.floor(toIndex / columns);
+
+  const fromSide = declaredEndpointSide(line.from);
+  const toSide = declaredEndpointSide(line.to);
+  const explicitSides = [fromSide, toSide].filter(Boolean);
+  const useRowGaps = explicitSides.some((side) => side === "top" || side === "bottom")
+    ? true
+    : explicitSides.some((side) => side === "left" || side === "right")
+      ? false
+      : Math.abs(toRow - fromRow) > Math.abs(toColumn - fromColumn);
+  const selected = [];
+  const add = (axis, index) => {
+    if (index < 0 || index >= (axis === "column" ? columns - 1 : rows - 1)) return;
+    const region = gridGapRegion(owner, axis, index, regions);
+    if (!selected.includes(region)) selected.push(region);
+  };
+
+  if (useRowGaps) {
+    if (fromRow === toRow) {
+      if (fromColumn === toColumn) return [];
+      if (Math.abs(toColumn - fromColumn) > 1 && !["top", "bottom"].includes(fromSide)) {
+        add("column", adjacentGridGap(fromColumn, toColumn, columns, fromSide, "right", "left"));
+      }
+      add("row", adjacentGridGap(fromRow, toRow, rows, fromSide ?? toSide, "bottom", "top"));
+      return selected;
+    }
+    if (fromColumn === toColumn) return [];
+    const sourceGap = adjacentGridGap(fromRow, toRow, rows, fromSide, "bottom", "top");
+    const targetGap = adjacentGridGap(toRow, fromRow, rows, toSide, "bottom", "top");
+    add("row", sourceGap);
+    if (targetGap !== sourceGap) {
+      const connector = adjacentGridGap(fromColumn, toColumn, columns, null, "right", "left");
+      add("column", connector);
+      add("row", targetGap);
+    }
+  } else {
+    if (fromColumn === toColumn) {
+      if (Math.abs(toRow - fromRow) > 1 && !["left", "right"].includes(fromSide)) {
+        add("row", adjacentGridGap(fromRow, toRow, rows, fromSide, "bottom", "top"));
+      }
+      add("column", adjacentGridGap(fromColumn, toColumn, columns, fromSide ?? toSide, "right", "left"));
+      return selected;
+    }
+    if (fromRow === toRow) return [];
+    const sourceGap = adjacentGridGap(fromColumn, toColumn, columns, fromSide, "right", "left");
+    const targetGap = adjacentGridGap(toColumn, fromColumn, columns, toSide, "right", "left");
+    // A column gutter spans every row. Prefer the target-adjacent gutter when
+    // both endpoints expose different candidates; adding both would require a
+    // full-width row gutter, which non-uniform grids do not necessarily have.
+    add("column", targetGap >= 0 ? targetGap : sourceGap);
+  }
+  return selected;
+}
+
 // a gap corridor runs vertically when it separates same-row neighbors —
 // labels riding it need horizontal room, not vertical
 function gapRunsVertically(region) {
+  if (region.gridAxis) return region.gridAxis === "column";
   const layout = effectiveLayout(region.owner);
   if (layout === "grid") {
     const members = region.owner.children.filter((child) => !child.anchor && !child.frame);
@@ -209,6 +308,49 @@ function explicitRegionConnectsBranches(line, lca, first, second) {
   });
 }
 
+function segmentAuthorsRegion(segment, region) {
+  if (segment.corridor) return region.corridors.includes(segment.corridor);
+  if (segment.region?.kind === "padding") {
+    return region.kind === "padding"
+      && region.owner === segment.region.container
+      && region.side === segment.region.side;
+  }
+  if (segment.region?.kind !== "gap" || region.kind !== "gap") return false;
+  const [first, second] = segment.region.between;
+  if (!first || !second || first.parent !== region.owner || second.parent !== region.owner) return false;
+  return region.index >= Math.min(first.layoutIndex, second.layoutIndex)
+    && region.index < Math.max(first.layoutIndex, second.layoutIndex);
+}
+
+function firstAuthoredSegmentFromEndpoint(line, endpoint) {
+  const segments = endpoint === line.from ? line.segments : [...line.segments].reverse();
+  return segments.find((segment) => segment.corridor || segment.region) ?? null;
+}
+
+// A merge may own one track only while every member is still on the common
+// terminal prefix. Restricting coalescence to the first commonly authored
+// region prevents a later common region from turning a split into a rejoin.
+function terminalMergeTrackKey(line, region) {
+  for (const membership of line.shareMemberships ?? []) {
+    const group = membership.group;
+    if (group.mode !== "merge" || !membership.endpoint || group.members.length < 2) continue;
+    const terminallyCommon = group.members.every((member) => {
+      if (!member.endpoint) return false;
+      const segment = firstAuthoredSegmentFromEndpoint(member.line, member.endpoint);
+      return segment != null && segmentAuthorsRegion(segment, region);
+    });
+    if (terminallyCommon) return `merge:${group.id}`;
+  }
+  return null;
+}
+
+function gridGapHeadDemand(line, headRun) {
+  if (!headRun) return 0;
+  const bundledTerminal = (line.shareMemberships ?? []).some((membership) =>
+    membership.group.mode === "bundle" && membership.group.source.kind === "port");
+  return bundledTerminal ? headRun * 2 : headRun + ROUTE_CLEARANCE;
+}
+
 export function reserveRoutingSpace(scene) {
   buildShareGroups(scene);
   const regions = new Map();
@@ -257,7 +399,7 @@ export function reserveRoutingSpace(scene) {
             lca.reserved.gridColumnGaps[gapIndex] ?? 0,
             reservations.get(key) ?? 0,
             lineLabelDemand(line, "horizontal"),
-            headRun ? headRun + ROUTE_CLEARANCE : 0,
+            gridGapHeadDemand(line, headRun),
           );
         } else if (fromColumn === toColumn && fromRow !== toRow) {
           const gapIndex = Math.floor((fromRow + toRow - 1) / 2);
@@ -268,11 +410,13 @@ export function reserveRoutingSpace(scene) {
             lca.reserved.gridRowGaps[gapIndex] ?? 0,
             reservations.get(key) ?? 0,
             lineLabelDemand(line, "vertical"),
-            headRun ? headRun + ROUTE_CLEARANCE : 0,
+            gridGapHeadDemand(line, headRun),
           );
         }
       }
-      const implicitRegions = physicalGapRegions(fromBranch, toBranch, regions, { implicit: true });
+      const implicitRegions = effectiveLayout(lca) === "grid"
+        ? implicitGridRegions(line, lca, fromBranch, toBranch, regions)
+        : physicalGapRegions(fromBranch, toBranch, regions);
       for (const region of implicitRegions) addUniqueLine(region, line);
       if (implicitRegions.length) line.labelRegionKey = implicitRegions[Math.floor(implicitRegions.length / 2)].key;
       // A port side fixes departure from the leaf object. An explicit gap at
@@ -339,7 +483,7 @@ export function reserveRoutingSpace(scene) {
     const trackIndexByKey = new Map();
     const trackEntries = region.entries.filter((entry) => entry.usage !== "crossing");
     for (const entry of trackEntries) {
-      const key = `line:${entry.line.id}`;
+      const key = terminalMergeTrackKey(entry.line, region) ?? `line:${entry.line.id}`;
       if (!trackIndexByKey.has(key)) trackIndexByKey.set(key, trackIndexByKey.size);
       entry.trackKey = key;
     }
@@ -374,21 +518,33 @@ export function reserveRoutingSpace(scene) {
 
     if (region.kind === "gap") {
       if (effectiveLayout(region.owner) === "grid") {
-        const members = region.owner.children.filter((child) => !child.anchor && !child.frame);
-        const columns = Math.max(1, Math.min(region.owner.columns ?? 1, members.length));
-        const firstRow = Math.floor(region.index / columns);
-        const secondRow = Math.floor((region.index + 1) / columns);
-        if (firstRow === secondRow) {
-          const gapIndex = region.index % columns;
-          region.owner.reserved.gridColumnGaps[gapIndex] = Math.max(
-            region.owner.reserved.gridColumnGaps[gapIndex] ?? 0,
+        if (region.gridAxis === "column") {
+          region.owner.reserved.gridColumnGaps[region.index] = Math.max(
+            region.owner.reserved.gridColumnGaps[region.index] ?? 0,
+            region.thickness,
+          );
+        } else if (region.gridAxis === "row") {
+          region.owner.reserved.gridRowGaps[region.index] = Math.max(
+            region.owner.reserved.gridRowGaps[region.index] ?? 0,
             region.thickness,
           );
         } else {
-          region.owner.reserved.gridRowGaps[firstRow] = Math.max(
-            region.owner.reserved.gridRowGaps[firstRow] ?? 0,
-            region.thickness,
-          );
+          const members = region.owner.children.filter((child) => !child.anchor && !child.frame);
+          const columns = Math.max(1, Math.min(region.owner.columns ?? 1, members.length));
+          const firstRow = Math.floor(region.index / columns);
+          const secondRow = Math.floor((region.index + 1) / columns);
+          if (firstRow === secondRow) {
+            const gapIndex = region.index % columns;
+            region.owner.reserved.gridColumnGaps[gapIndex] = Math.max(
+              region.owner.reserved.gridColumnGaps[gapIndex] ?? 0,
+              region.thickness,
+            );
+          } else {
+            region.owner.reserved.gridRowGaps[firstRow] = Math.max(
+              region.owner.reserved.gridRowGaps[firstRow] ?? 0,
+              region.thickness,
+            );
+          }
         }
       } else {
         region.owner.reserved.gaps[region.index] = Math.max(region.owner.reserved.gaps[region.index] ?? 0, region.thickness);
@@ -464,9 +620,10 @@ function measureContent(object, childMax = 0) {
     : object.roles.includes("implementation-status") ? 120
     : object.kind === "note" || object.kind === "legend-item" ? 44
     : 72;
-  // a container title wraps toward its children's width — the box must not
-  // grow wide only to keep its title on one line
-  const labelWrap = object.children.length ? Math.max(24, Math.floor(childMax / charWidth)) : wrap;
+  // A container title occupies the leading part of its title channel. Keep a
+  // trailing quarter free so vertical routes can enter the container without
+  // crossing the label or making a reverse excursion around one long line.
+  const labelWrap = object.children.length ? Math.max(24, Math.floor(childMax * 0.75 / charWidth)) : wrap;
   const expanded = [];
   for (const line of contentLines(object)) {
     if (line.divider) expanded.push(line);

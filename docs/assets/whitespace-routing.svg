@@ -28,32 +28,35 @@
   <text x="92" y="138" class="mono">padding(system, "top")</text>
 
   <!-- three nodes in a row with tinted gaps -->
-  <rect x="90" y="230" width="270" height="150" rx="16" class="node"/>
-  <text x="225" y="312" text-anchor="middle" class="label">ingest</text>
+  <rect x="90" y="230" width="240" height="150" rx="16" class="node"/>
+  <text x="210" y="312" text-anchor="middle" class="label">ingest</text>
 
-  <rect x="380" y="212" width="110" height="196" rx="12" class="region"/>
-  <text x="435" y="432" text-anchor="middle" class="mono">gap(ingest, transform)</text>
+  <rect x="350" y="212" width="110" height="196" rx="12" class="region"/>
+  <text x="405" y="432" text-anchor="middle" class="mono">gap(ingest, transform)</text>
 
-  <rect x="510" y="230" width="270" height="150" rx="16" class="node"/>
-  <text x="645" y="312" text-anchor="middle" class="label">transform</text>
+  <rect x="480" y="230" width="240" height="150" rx="16" class="node"/>
+  <text x="600" y="312" text-anchor="middle" class="label">transform</text>
 
-  <rect x="800" y="212" width="110" height="196" rx="12" class="region"/>
-  <text x="855" y="432" text-anchor="middle" class="mono">gap(transform, publish)</text>
+  <rect x="740" y="212" width="110" height="196" rx="12" class="region"/>
+  <text x="795" y="432" text-anchor="middle" class="mono">gap(transform, publish)</text>
 
-  <rect x="930" y="230" width="270" height="150" rx="16" class="node"/>
-  <text x="1065" y="312" text-anchor="middle" class="label">publish</text>
+  <rect x="870" y="230" width="240" height="150" rx="16" class="node"/>
+  <text x="990" y="312" text-anchor="middle" class="label">publish</text>
 
   <!-- a route through top padding, no declaration needed -->
-  <circle cx="225" cy="230" r="7" fill="#ffffff" stroke="#6d4aff" stroke-width="3"/>
-  <circle cx="1065" cy="230" r="7" fill="#ffffff" stroke="#6d4aff" stroke-width="3"/>
-  <path d="M 225 230 L 225 145 L 1065 145 L 1065 230" class="route" marker-end="url(#wsArrow)"/>
-  <rect x="560" y="152" width="170" height="34" rx="17" fill="#f1edff"/>
-  <text x="645" y="174" text-anchor="middle" class="small">retry stream</text>
+  <circle cx="210" cy="230" r="7" fill="#ffffff" stroke="#6d4aff" stroke-width="3"/>
+  <circle cx="990" cy="230" r="7" fill="#ffffff" stroke="#6d4aff" stroke-width="3"/>
+  <path d="M 210 230 L 210 145 L 990 145 L 990 230" class="route" marker-end="url(#wsArrow)"/>
+  <rect x="515" y="152" width="170" height="34" rx="17" fill="#f1edff"/>
+  <text x="600" y="174" text-anchor="middle" class="small">retry stream</text>
 
   <!-- a route through a gap -->
-  <circle cx="780" cy="305" r="7" fill="#ffffff" stroke="#6d4aff" stroke-width="3"/>
-  <circle cx="930" cy="305" r="7" fill="#ffffff" stroke="#6d4aff" stroke-width="3"/>
-  <path d="M 780 305 L 930 305" class="route" marker-end="url(#wsArrow)"/>
+  <circle cx="720" cy="305" r="7" fill="#ffffff" stroke="#6d4aff" stroke-width="3"/>
+  <circle cx="870" cy="305" r="7" fill="#ffffff" stroke="#6d4aff" stroke-width="3"/>
+  <path d="M 720 305 L 870 305" class="route" marker-end="url(#wsArrow)"/>
 
-  <text x="600" y="485" text-anchor="middle" class="small muted">Every gap between siblings and every padding band is routable without declaration. Occupied regions widen, and layout reacts — like CSS margins.</text>
+  <text x="600" y="475" text-anchor="middle" class="small muted">
+    <tspan x="600">Every gap between siblings and every padding band is routable without declaration.</tspan>
+    <tspan x="600" dy="22">Occupied regions widen, and layout reacts — like CSS margins.</tspan>
+  </text>
 </svg>

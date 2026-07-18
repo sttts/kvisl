@@ -63,5 +63,8 @@
   <text x="700" y="420" class="mono">fontSize: 14</text>
   <text x="960" y="420" class="small muted">← renderer default</text>
 
-  <text x="600" y="514" text-anchor="middle" class="small muted">Rules set presentation and metric defaults only — never topology, membership, ports, or existence. Structural selectors stop at component boundaries; roles and classes are the public styling API.</text>
+  <text x="600" y="500" text-anchor="middle" class="small muted">
+    <tspan x="600">Rules set presentation and metric defaults only — never topology, membership, ports, or existence.</tspan>
+    <tspan x="600" dy="22">Structural selectors stop at component boundaries; roles and classes are the public styling API.</tspan>
+  </text>
 </svg>

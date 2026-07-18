@@ -280,6 +280,44 @@ function runsCoverSegment(runs, segment) {
   return false;
 }
 
+function samePoint(first, second) {
+  return Math.abs(first.x - second.x) <= 0.001 && Math.abs(first.y - second.y) <= 0.001;
+}
+
+function turnsFromTerminalRun(run, segment) {
+  const runHorizontal = run.first.y === run.second.y;
+  const segmentHorizontal = segment.first.y === segment.second.y;
+  if (runHorizontal === segmentHorizontal) return false;
+  return samePoint(run.second, segment.first) || samePoint(run.second, segment.second);
+}
+
+function sharedMembershipPairs(firstLine, secondLine) {
+  const pairs = [];
+  for (const firstMembership of firstLine.shareMemberships ?? []) {
+    const secondMembership = (secondLine.shareMemberships ?? [])
+      .find((membership) => membership.group === firstMembership.group);
+    if (!secondMembership) continue;
+    const group = firstMembership.group;
+    const sameLane = group.mode === "merge"
+      || (group.mode === "bundle" && firstMembership.lane === secondMembership.lane);
+    if (sameLane) pairs.push({ group, firstMembership, secondMembership });
+  }
+  return pairs;
+}
+
+function memberLinesForLane(group, membership) {
+  return group.mode === "merge"
+    ? group.members.map((member) => member.line)
+    : membership.lane?.members.map((member) => member.line) ?? [];
+}
+
+function runsForPair(group, firstLine, secondLine) {
+  return (group.allowedSharedRuns ?? []).filter((run) => {
+    const members = run.members ?? group.members.map((member) => member.line);
+    return members.includes(firstLine) && members.includes(secondLine);
+  });
+}
+
 // While routes are solved sequentially, a later member may extend the
 // already-authorized terminal prefix of its lane. This is not a rejoin: the
 // overlap touches the prefix's outer end and grows it monotonically away from
@@ -310,20 +348,50 @@ function extendsTerminalRun(run, segment) {
 export function segmentsMayShareGeometry(firstLine, secondLine, firstSegment, secondSegment) {
   const overlap = overlapSegment(firstSegment, secondSegment);
   if (!overlap) return false;
-  const secondMemberships = secondLine.shareMemberships ?? [];
-  for (const firstMembership of firstLine.shareMemberships ?? []) {
-    const secondMembership = secondMemberships.find((membership) => membership.group === firstMembership.group);
-    if (!secondMembership) continue;
-    const group = firstMembership.group;
-    const sameLane = group.mode === "merge"
-      || (group.mode === "bundle" && firstMembership.lane === secondMembership.lane);
-    if (!sameLane) continue;
-    const allowedRuns = (group.allowedSharedRuns ?? []).filter((run) => {
-      const members = run.members ?? group.members.map((member) => member.line);
-      return members.includes(firstLine) && members.includes(secondLine);
-    });
+  for (const { group } of sharedMembershipPairs(firstLine, secondLine)) {
+    const allowedRuns = runsForPair(group, firstLine, secondLine);
     if (allowedRuns.some((run) => runContains(run, overlap)) || runsCoverSegment(allowedRuns, overlap)) return true;
     if (group.source.kind === "port" && allowedRuns.some((run) => extendsTerminalRun(run, overlap))) return true;
+    if (group.source.kind === "port" && allowedRuns.some((run) => turnsFromTerminalRun(run, overlap))) return true;
   }
   return false;
+}
+
+// Routing is solved one waypoint at a time. Once an accepted piece extends a
+// shared terminal prefix, advance the authorization frontier immediately so
+// the following piece sees one continuous trunk instead of an unrelated
+// overlap. Only overlap with an already-routed compatible member can advance
+// the frontier, so a split can never authorize a later rejoin.
+export function authorizeSharedGeometry(firstLine, secondLine, firstSegment, secondSegment) {
+  const overlap = overlapSegment(firstSegment, secondSegment);
+  if (!overlap) return false;
+  let changed = false;
+  for (const { group, firstMembership } of sharedMembershipPairs(firstLine, secondLine)) {
+    if (group.source.kind !== "port") continue;
+    const allowedRuns = runsForPair(group, firstLine, secondLine);
+    if (allowedRuns.some((run) => runContains(run, overlap)) || runsCoverSegment(allowedRuns, overlap)) continue;
+    const extension = allowedRuns.find((run) => extendsTerminalRun(run, overlap));
+    if (extension) {
+      const horizontal = extension.first.y === extension.second.y;
+      const axis = horizontal ? "x" : "y";
+      const direction = Math.sign(extension.second[axis] - extension.first[axis]);
+      const candidate = [overlap.first, overlap.second]
+        .sort((first, second) => direction * (second[axis] - first[axis]))[0];
+      if (direction * (candidate[axis] - extension.second[axis]) > 0.001) {
+        extension.second = { ...candidate };
+        changed = true;
+      }
+      continue;
+    }
+    const turn = allowedRuns.find((run) => turnsFromTerminalRun(run, overlap));
+    if (!turn) continue;
+    const second = samePoint(turn.second, overlap.first) ? overlap.second : overlap.first;
+    group.allowedSharedRuns.push({
+      first: { ...turn.second },
+      second: { ...second },
+      members: memberLinesForLane(group, firstMembership),
+    });
+    changed = true;
+  }
+  return changed;
 }

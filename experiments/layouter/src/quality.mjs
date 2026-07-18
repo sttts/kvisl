@@ -13,7 +13,7 @@ function boxesOverlap(first, second, padding = 0) {
 }
 
 function segmentHitsBox(first, second, box) {
-  const inset = 3;
+  const inset = 0;
   const left = box.x + inset;
   const right = box.x + box.width - inset;
   const top = box.y + inset;

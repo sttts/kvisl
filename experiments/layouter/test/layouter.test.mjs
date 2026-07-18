@@ -54,6 +54,29 @@ function assertNoReverseExcursion(routePoints, lineId) {
   }
 }
 
+function longitudinalRouteLength(line, track) {
+  const geometry = regionGeometry(track.region);
+  let length = 0;
+  for (let index = 1; index < line.route.length; index += 1) {
+    const first = line.route[index - 1];
+    const second = line.route[index];
+    if (track.allocation.axis === "vertical"
+      && first.x === second.x
+      && Math.abs(first.x - track.allocation.coordinate) < 0.001) {
+      const start = Math.max(Math.min(first.y, second.y), geometry.y);
+      const end = Math.min(Math.max(first.y, second.y), geometry.y + geometry.height);
+      length += Math.max(0, end - start);
+    } else if (track.allocation.axis === "horizontal"
+      && first.y === second.y
+      && Math.abs(first.y - track.allocation.coordinate) < 0.001) {
+      const start = Math.max(Math.min(first.x, second.x), geometry.x);
+      const end = Math.min(Math.max(first.x, second.x), geometry.x + geometry.width);
+      length += Math.max(0, end - start);
+    }
+  }
+  return length;
+}
+
 test("every repository diagram produces a finite orthogonal SVG preview", async () => {
   const files = await exampleFiles();
   assert.equal(files.length, 14);
@@ -205,6 +228,10 @@ test("UML interaction routing keeps messages straight and lifelines equally deep
     messages.filter((line) => line.route.length !== 2).map((line) => line.id).join(", "));
   const lifelines = scene.objects.filter((object) => object.roles.includes("uml-lifeline"));
   assert.equal(new Set(lifelines.map((object) => object.box.y + object.box.height)).size, 1);
+  const spines = scene.lines.filter((line) => line.roles.includes("uml-lifeline-spine"));
+  assert.ok(spines.every((line) => line.route.length === 2 && line.route[0].x === line.route[1].x),
+    spines.filter((line) => line.route.length !== 2 || line.route[0].x !== line.route[1].x)
+      .map((line) => line.from.object.parent.path).join(", "));
   assert.doesNotMatch(svg, /<circle[^>]+r="3"/);
   assert.equal(scene.lines.find((line) => line.id === "reserved").style.dash, "dashed");
   assert.match(svg, /data-uml-combined-fragment-tab="checkout-flow\/payment-retry"/);
@@ -257,14 +284,27 @@ test("a headed endpoint has a straight terminal run at least twice the head widt
     const { scene } = await solveFile(file);
     for (const line of scene.lines) {
       const heads = normalizedHeads(line.heads);
+      const terminalVectors = [
+        { x: line.route[1].x - line.route[0].x, y: line.route[1].y - line.route[0].y },
+        { x: line.route.at(-2).x - line.route.at(-1).x, y: line.route.at(-2).y - line.route.at(-1).y },
+      ];
       const terminalRuns = [
-        Math.abs(line.route[1].x - line.route[0].x) + Math.abs(line.route[1].y - line.route[0].y),
-        Math.abs(line.route.at(-1).x - line.route.at(-2).x) + Math.abs(line.route.at(-1).y - line.route.at(-2).y),
+        Math.abs(terminalVectors[0].x) + Math.abs(terminalVectors[0].y),
+        Math.abs(terminalVectors[1].x) + Math.abs(terminalVectors[1].y),
       ];
       heads.forEach((head, endIndex) => {
         const minimum = minimumHeadRun(head);
         assert.ok(terminalRuns[endIndex] >= minimum,
           `${path.relative(repo, file)}:${line.id} end ${endIndex} has ${terminalRuns[endIndex]}px before its first bend; expected ${minimum}px`);
+      });
+      [line.from, line.to].forEach((endpoint, endIndex) => {
+        const expected = endpoint.physicalSide === "left" ? { x: -1, y: 0 }
+          : endpoint.physicalSide === "right" ? { x: 1, y: 0 }
+            : endpoint.physicalSide === "top" ? { x: 0, y: -1 }
+              : { x: 0, y: 1 };
+        const actual = terminalVectors[endIndex];
+        assert.ok(actual.x * expected.x + actual.y * expected.y > 0,
+          `${path.relative(repo, file)}:${line.id} end ${endIndex} approaches its ${endpoint.physicalSide} port tangentially`);
       });
     }
   }
@@ -470,6 +510,24 @@ test("Modelplane fixture centers its control-plane label and leaves the external
   assert.equal(request.physicalSide, "top");
 });
 
+test("a bundled terminal approach stays centered in its grid gutter", async () => {
+  const entry = path.join(repo, "examples", "modelplane-fleet-inference", "diagram.tsx");
+  const { scene } = await solveFile(entry);
+  const line = scene.lines.find((candidate) => candidate.id === "cache-to-replica");
+  const gutter = scene.channelCellByKey.get("mesh:grid-column-gap:fleet/cluster-a/serving-grid:0");
+  const center = gutter.geometry.x + gutter.geometry.width / 2;
+  const vertical = line.route.slice(1)
+    .map((point, index) => ({ first: line.route[index], second: point }))
+    .find(({ first, second }) => first.x === second.x && first.y !== second.y);
+
+  assert.ok(vertical);
+  assert.equal(vertical.first.x, center);
+  assert.ok(line.route.slice(1).every((point, index) => {
+    const previous = line.route[index];
+    return point.x >= previous.x || point.y !== previous.y;
+  }), "the centered approach must not backtrack before its terminal run");
+});
+
 test("authored corridor routing preserves its hard pins and a centered target dock", async () => {
   const entry = path.join(repo, "examples", "modelplane-fleet-inference", "diagram.tsx");
   const { scene } = await solveFile(entry);
@@ -490,6 +548,11 @@ test("authored corridor routing preserves its hard pins and a centered target do
   assert.equal(corridorRun.second.x, line.to.point.x);
   assert.ok(line.requiredRoutePins.every((pin) => line.route.some((point) =>
     point.x === pin.x && point.y === pin.y)));
+  const routeLength = line.route.slice(1).reduce((sum, point, index) =>
+    sum + Math.abs(point.x - line.route[index].x) + Math.abs(point.y - line.route[index].y), 0);
+  const directLength = Math.abs(line.route[0].x - line.route.at(-1).x)
+    + Math.abs(line.route[0].y - line.route.at(-1).y);
+  assert.equal(routeLength, directLength, "the cluster-A branch must not leave and re-enter its target column");
 });
 
 test("deep side ports reserve centered longitudinal tracks in adjacent sibling gaps", async () => {
@@ -515,6 +578,57 @@ test("deep side ports reserve centered longitudinal tracks in adjacent sibling g
   }
   const placement = scene.lines.find((candidate) => candidate.id === "place-cluster-a");
   assert.equal(placement.regionTracks.has("gap:fleet:0"), false);
+});
+
+test("implicit package and use-case routes use the canonical centered grid gutter", async () => {
+  const cases = [
+    ["package-diagram.tsx", "checkout-shared", "grid-column-gap:packages:0"],
+    ["use-case-diagram.tsx", "checkout-auth", "grid-column-gap:scene/store/cases:0"],
+  ];
+  for (const [file, lineId, regionKey] of cases) {
+    const entry = path.join(repo, "examples", "uml", file);
+    const { scene } = await solveFile(entry);
+    const line = scene.lines.find((candidate) => candidate.id === lineId);
+    const region = scene.regions.get(regionKey);
+    const track = line.regionTracks.get(regionKey);
+    const geometry = regionGeometry(region);
+
+    assert.equal(region.gridAxis, "column");
+    assert.equal(region.channelBinding.trackCell.key,
+      `mesh:grid-column-gap:${region.owner.path}:${region.index}`);
+    assert.ok(region.channelBinding.trackCell.regionKeys.includes(region.key));
+    assert.equal(track.crossing, false);
+    assert.equal(track.allocation.coordinate, geometry.x + geometry.width / 2);
+    assert.ok(longitudinalRouteLength(line, track) > 0,
+      `${lineId} reserves a canonical grid track without drawing on it`);
+  }
+});
+
+test("implicit class-diagram lanes form centered physical blocks in every used grid gutter", async () => {
+  const entry = path.join(repo, "examples", "uml", "class-diagram.tsx");
+  const { scene } = await solveFile(entry);
+  const firstRow = scene.regions.get("grid-row-gap:sales/model:0");
+  const firstRowGeometry = regionGeometry(firstRow);
+  const firstRowTracks = firstRow.entries
+    .map((item) => item.line.regionTracks.get(firstRow.key))
+    .filter((track) => !track.crossing)
+    .sort((first, second) => first.allocation.coordinate - second.allocation.coordinate);
+
+  assert.deepEqual(firstRow.entries.map((item) => item.line.id).sort(), ["order-payment", "repository-dependency"]);
+  assert.equal((firstRowTracks[0].allocation.coordinate + firstRowTracks.at(-1).allocation.coordinate) / 2,
+    firstRowGeometry.y + firstRowGeometry.height / 2);
+
+  for (const region of scene.regions.values()) {
+    if (!region.gridAxis) continue;
+    const expectedCell = `mesh:grid-${region.gridAxis}-gap:${region.owner.path}:${region.index}`;
+    assert.equal(region.channelBinding.trackCell.key, expectedCell);
+    for (const item of region.entries) {
+      const track = item.line.regionTracks.get(region.key);
+      if (track.crossing) continue;
+      assert.ok(longitudinalRouteLength(item.line, track) > 0,
+        `${item.line.id} has a phantom allocation in ${region.key}`);
+    }
+  }
 });
 
 test("route-aware alignment preserves declared space-between distribution", async () => {
@@ -694,6 +808,78 @@ test("a sole explicit gap crossing does not create an avoidable longitudinal det
   assert.equal(routeLength, directLength);
 });
 
+test("shared-port corridor branches stay direct and branch inside the authored gap", async () => {
+  const entry = path.join(repo, "docs", "diagrams", "routing-corridors.tsx");
+  const { scene } = await solveFile(entry);
+  const geometry = regionGeometry(scene.regions.get("gap:system:0"));
+  for (const line of scene.lines) {
+    const routeLength = line.route.slice(1).reduce((sum, point, index) =>
+      sum + Math.abs(point.x - line.route[index].x) + Math.abs(point.y - line.route[index].y), 0);
+    const directLength = Math.abs(line.route[0].x - line.route.at(-1).x)
+      + Math.abs(line.route[0].y - line.route.at(-1).y);
+    assert.ok(Math.abs(routeLength - directLength) < 0.001, `${line.id} takes a non-monotone corridor detour`);
+  }
+  const requestLines = scene.lines.filter((line) => line.id.startsWith("request-"));
+  const requestTracks = requestLines.map((line) => line.regionTracks.get("gap:system:0"));
+  assert.equal(new Set(requestTracks.map((track) => track.trackKey)).size, 1,
+    "one named request corridor was allocated as multiple physical tracks");
+  const requestTrackCoordinate = requestTracks[0].allocation.coordinate;
+  const requestHorizontals = requestLines.flatMap((line) => line.route.slice(1)
+    .map((second, index) => ({ first: line.route[index], second }))
+    .filter(({ first, second }) => first.y === second.y && first.x !== second.x));
+  assert.ok(requestHorizontals.length >= 2);
+  assert.ok(requestHorizontals.every(({ first }) => first.y === requestTrackCoordinate),
+    "branches of one named request corridor use different horizontal track heights");
+  const requestClusterB = scene.lines.find((line) => line.id === "request-cluster-b");
+  const horizontal = requestClusterB.route.slice(1)
+    .map((second, index) => ({ first: requestClusterB.route[index], second }))
+    .filter(({ first, second }) => first.y === second.y && first.x !== second.x);
+  assert.equal(requestClusterB.regionTracks.get("gap:system:0").crossing, false,
+    "shared corridor member was reduced to a padding-to-padding crossing");
+  assert.ok(horizontal.every(({ first }) => first.y >= geometry.y && first.y <= geometry.y + geometry.height),
+    "request-cluster-b branches before entering its authored corridor");
+});
+
+test("a late named-port merge keeps one shared trunk until its corridor branches", async () => {
+  const entry = path.join(repo, "examples", "vegvisir-voice-agents", "diagram.tsx");
+  const { scene } = await solveFile(entry);
+  const members = scene.lines.filter((line) => line.from?.port?.id === "tools");
+  assert.equal(members.length, 3);
+  const group = members[0].shareMemberships[0].group;
+  const padding = scene.regions.get("padding:system/user-owned:left");
+  const geometry = regionGeometry(padding);
+  const tracks = members.map((line) => line.regionTracks.get(padding.key));
+  assert.equal(new Set(tracks.map((track) => track.trackKey)).size, 1,
+    "the first common authored region split a terminal merge into separate tracks");
+  const terminalHorizontals = members.map((line) => line.route.slice(1)
+    .map((second, index) => ({ first: line.route[index], second }))
+    .find(({ first, second }) => first.y === second.y
+      && first.x !== second.x
+      && Math.abs(first.y - members[0].from.point.y) <= 24));
+  assert.ok(terminalHorizontals.every(Boolean));
+  assert.equal(new Set(terminalHorizontals.map(({ first, second }) =>
+    `${Math.min(first.x, second.x)}:${Math.max(first.x, second.x)}:${first.y}`)).size, 1,
+  "compatible late-merge members use parallel terminal approaches instead of one shared horizontal run");
+  const runs = members.map((line) => line.route.slice(1)
+    .map((second, index) => ({ first: line.route[index], second }))
+    .find(({ first, second }) => first.x === second.x
+      && first.y !== second.y
+      && first.x >= geometry.x
+      && first.x <= geometry.x + geometry.width));
+  assert.ok(runs.every(Boolean));
+  assert.equal(new Set(runs.map((run) => run.first.x)).size, 1);
+  const commonStart = Math.max(...runs.map((run) => Math.min(run.first.y, run.second.y)));
+  const commonEnd = Math.min(...runs.map((run) => Math.max(run.first.y, run.second.y)));
+  assert.ok(commonEnd - commonStart > 24, "late merge lacks a positive-length shared longitudinal trunk");
+  assert.ok(group.allowedSharedRuns.some((run) => run.members.length === 3
+    && Math.abs(run.first.x - run.second.x) + Math.abs(run.first.y - run.second.y) > 24),
+  "tools fan-out branches before establishing a positive-length shared corridor trunk");
+  assert.ok(group.allowedSharedRuns.some((run) => run.members.length === 3
+    && run.first.y === run.second.y
+    && Math.abs(run.first.x - run.second.x) > 24),
+  "tools fan-out does not authorize its common horizontal terminal run");
+});
+
 test("longitudinal corridor tracks form a centered geometry-ordered bundle", async () => {
   const entry = path.join(repo, "examples", "coverage", "diagram.tsx");
   const { scene } = await solveFile(entry);
@@ -735,18 +921,31 @@ test("a segment label stays anchored at the authored routing region", async () =
     : label.y >= Math.min(segment.first.y, segment.second.y) && label.y <= Math.max(segment.first.y, segment.second.y));
 });
 
-test("a gap label may hug the branch-facing border without moving away from its line", async () => {
+test("an authored gap label keeps its region, longitudinal run, and 7px adjacency", async () => {
   const entry = path.join(repo, "examples", "agent-substrate", "diagram.tsx");
   const { scene } = await solveFile(entry);
   const line = scene.lines.find((candidate) => candidate.id === "self-suspend");
   const label = line.routeLabels.find((candidate) => candidate.text.startsWith("api.ate-system"));
-  const segment = line.route.slice(1)
-    .map((point, index) => ({ first: line.route[index], second: point }))[label.authoredRun];
+  const gap = scene.regions.get("gap:cluster/layers:1");
+  const geometry = regionGeometry(gap);
+  const routeSegments = line.route.slice(1)
+    .map((point, index) => ({ index, first: line.route[index], second: point }));
+  const authoredRuns = routeSegments.filter(({ first, second }) =>
+    first.x === second.x
+    && first.y !== second.y
+    && first.x >= geometry.x
+    && first.x <= geometry.x + geometry.width
+    && Math.max(first.y, second.y) >= geometry.y
+    && Math.min(first.y, second.y) <= geometry.y + geometry.height);
+  assert.equal(label.authoredRegion, gap);
+  assert.equal(authoredRuns.length, 1);
+  assert.equal(label.authoredRun, authoredRuns[0].index);
+  const segment = authoredRuns[0];
   const distance = segment.first.x === segment.second.x
     ? Math.min(Math.abs(label.box.x - segment.first.x), Math.abs(label.box.x + label.box.width - segment.first.x))
     : Math.min(Math.abs(label.box.y - segment.first.y), Math.abs(label.box.y + label.box.height - segment.first.y));
   assert.equal(label.authoredAxis, true);
-  assert.ok(distance <= 8, `gap label is ${distance}px from its authored run`);
+  assert.equal(distance, 7);
 });
 
 test("column near-miss stretching and final-width alignment match the reference composition", async () => {
@@ -833,7 +1032,7 @@ test("named-port sharing preserves terminal order without rectangular route excu
     .find(([first, second]) => first.x === second.x && first.y !== second.y)?.[0].x;
   assert.equal(verticalApproach(merge[0]), verticalApproach(merge[2]));
   assert.equal(verticalApproach(bundle[0]), verticalApproach(bundle[2]));
-  assert.equal(verticalApproach(styleCohorts[0]), verticalApproach(styleCohorts[2]));
+  assert.equal(Math.abs(verticalApproach(styleCohorts[0]) - verticalApproach(styleCohorts[2])), 12);
   assert.deepEqual(bundle.map((line) => line.to.point.y), [...bundle.map((line) => line.to.point.y)].sort((a, b) => a - b));
   assert.deepEqual(separate.map((line) => line.to.point.y), [...separate.map((line) => line.to.point.y)].sort((a, b) => a - b));
   assert.equal(new Set(bundle.map((line) => line.to.point.y)).size, 3);

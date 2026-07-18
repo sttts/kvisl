@@ -377,7 +377,7 @@ Layouts and components MUST additionally be able to state partial `before`/`afte
 
 Every element and scope MUST carry margin, and every container padding, as logical whitespace demands. The whitespace between layout siblings (gaps) and between a container's border and its content (padding bands) MUST be implicit, addressable routing regions — no declaration is needed for a line to route through them.
 
-Routing MUST interact with layout the way margins do: a whitespace region that carries line tracks widens until its content fits, and the surrounding layout accounts for it. A layout run MUST NOT assume lines are drawn afterward with no space requirement. Lines MUST reserve routing space by default, with an explicit opt-out to overlay.
+Routing MUST interact with layout the way margins do: a whitespace region that carries line tracks widens until its content fits, and the surrounding layout accounts for it. A layout run MUST NOT assume lines are drawn afterward with no space requirement. Lines MUST reserve routing space by default, with an explicit opt-out to overlay. An overlay line MUST NOT participate in route occupancy: its intersections MUST NOT displace either the overlay or reserving lines unless an explicit avoidance rule requests that separation.
 
 A `Corridor` declaration MUST refine an implicit region rather than exist detached from structure: it names the region, sets spacing, capacity, and packing pressure, orders tracks, and MAY subdivide a region together with other corridors in a defined order.
 
