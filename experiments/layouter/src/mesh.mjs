@@ -221,8 +221,15 @@ function connectBoundary(first, second, firstStart, firstEnd, secondStart, secon
 }
 
 function allowsOutward(cell, side) {
-  return cell.kind === "padding" && cell.side === side
-    || cell.kind === "corner" && cell.outwardSides.includes(side);
+  if (cell.kind === "padding") return cell.side === side;
+  if (cell.kind === "corner") return cell.outwardSides.includes(side);
+  if (cell.zone !== "access") return false;
+  const geometry = cell.geometry;
+  const owner = cell.owner.box;
+  return side === "top" && geometry.y === owner.y
+    || side === "right" && geometry.x + geometry.width === owner.x + owner.width
+    || side === "bottom" && geometry.y + geometry.height === owner.y + owner.height
+    || side === "left" && geometry.x === owner.x;
 }
 
 function connectHierarchyCells(cells) {

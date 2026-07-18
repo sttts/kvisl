@@ -49,6 +49,19 @@ test("rotated multiline labels keep the solved center as their painter origin", 
   assert.equal((svg.match(/stroke="#ffffff"/g) ?? []).length, 2);
 });
 
+test("upright labels beside vertical routes paint from their route-facing edge", () => {
+  const svg = renderSvg(sceneWithLabel({
+    text: "progress",
+    x: 105,
+    y: 91,
+    textAnchor: "start",
+    box: { x: 100, y: 80, width: 76, height: 22 },
+    angle: 0,
+  }), { transparent: true });
+
+  assert.match(svg, /<text x="105" y="96" text-anchor="start"/);
+});
+
 test("routing debug paints channel-mesh cells as inset ten-percent red rectangles", () => {
   const scene = sceneWithLabel({
     text: "debug",

@@ -202,7 +202,8 @@ function drawLineLabels(line, scene) {
     const firstBaseline = centerY - lines.length * lineHeight / 2 + 13;
     const stroke = color(line.style.stroke, scene, "#334155");
     const transform = label.angle ? ` transform="rotate(${label.angle} ${centerX} ${centerY})"` : "";
-    return `<g data-line-label="${escape(line.id)}"${transform}>${lines.map((text, index) => `<text x="${centerX}" y="${firstBaseline + index * lineHeight}" text-anchor="middle" font-family="${escape(fontFamily(line.style, "ui-rounded, sans-serif"))}" font-size="13" fill="${escape(stroke)}" stroke="${escape(canvasColor(scene))}" stroke-opacity=".92" stroke-width="3.5" stroke-linejoin="round" paint-order="stroke fill">${escape(text)}</text>`).join("")}</g>`;
+    const textAnchor = label.textAnchor ?? "middle";
+    return `<g data-line-label="${escape(line.id)}"${transform}>${lines.map((text, index) => `<text x="${centerX}" y="${firstBaseline + index * lineHeight}" text-anchor="${textAnchor}" font-family="${escape(fontFamily(line.style, "ui-rounded, sans-serif"))}" font-size="13" fill="${escape(stroke)}" stroke="${escape(canvasColor(scene))}" stroke-opacity=".92" stroke-width="3.5" stroke-linejoin="round" paint-order="stroke fill">${escape(text)}</text>`).join("")}</g>`;
   }).join("");
 }
 

@@ -636,10 +636,10 @@ export function escalateLabelReservations(scene, reservations) {
   for (const line of scene.lines) {
     for (const label of line.routeLabels) {
       const target = label.authoredSegment?.labelReservation ?? line.labelReservation;
-      if (!label.authoredSegment || label.authoredRegion || !target) continue;
-      const current = reservations.get(target.key) ?? 0;
+      if (!label.authoredSegment || !target
+        || label.authoredRegion && !label.outsideAuthoredRegion) continue;
       const cap = lineLabelDemand(line, target.axis, label.text);
-      raise(target.key, Math.min(cap, current + 32));
+      raise(target.key, cap);
     }
   }
   for (const item of [...quality.labelObjectOverlaps, ...quality.labelDecorOverlaps, ...quality.labelLabelOverlaps]) {

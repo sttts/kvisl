@@ -283,6 +283,23 @@ test("cross-hierarchy routes go around containers unrelated to both endpoints", 
     "audit-upright never leaves the unrelated rotated container's vertical span");
 });
 
+test("coarse routing traverses canonical channel cells and positive-length portals", async () => {
+  const entry = path.join(repo, "examples", "coverage", "diagram.tsx");
+  const { scene } = await solveFile(entry);
+  const line = scene.lines.find((candidate) => candidate.id === "probe-upright");
+  assert.ok(line.coarseCellPath.length > 2);
+  assert.ok(line.coarseCellPath.includes("mesh:padding:$root:top"));
+  assert.ok(line.coarseCellPath.every((key) =>
+    !scene.channelCellByKey.get(key).owner.path.startsWith("system/rotated")));
+  for (let index = 1; index < line.coarseCellPath.length; index += 1) {
+    const first = scene.channelCellByKey.get(line.coarseCellPath[index - 1]);
+    const second = scene.channelCellByKey.get(line.coarseCellPath[index]);
+    const portal = first.portals.find((candidate) => candidate.to === second.key);
+    assert.ok(portal, `${first.key} has no portal to ${second.key}`);
+    assert.ok(portal.end > portal.start);
+  }
+});
+
 test("unconstrained routes receive the bounded shortest-path pass", async () => {
   const machine = await solveFile(path.join(repo, "examples", "machine-thought-os", "diagram.tsx"));
   const systemCall = machine.scene.lines.find((line) => line.id === "fork-system-call");
@@ -975,11 +992,13 @@ test("longitudinal corridor tracks form a centered geometry-ordered block", asyn
   assert.equal((Math.min(...coordinates) + Math.max(...coordinates)) / 2, geometry.x + geometry.width / 2);
 });
 
-test("authored run candidates avoid label-driven grid inflation", async () => {
+test("authored run candidates reserve enough local grid whitespace for their labels", async () => {
   const entry = path.join(repo, "examples", "agent-substrate", "diagram.tsx");
   const { scene } = await solveFile(entry);
   const grid = scene.objectByPath.get("cluster/layers");
-  assert.ok(grid.layoutData.columnGaps[1] <= 64);
+  const longLabel = scene.lines.find((line) => line.id === "self-suspend").routeLabels
+    .find((label) => label.text.startsWith("api.ate-system"));
+  assert.ok(grid.layoutData.columnGaps[1] >= longLabel.box.width + 4);
   assert.ok(scene.lines.flatMap((line) => line.routeLabels).filter((label) => label.authoredSegment)
     .every((label) => label.authoredRegion));
   assert.equal(analyzeScene(scene).labelObjectOverlaps.length, 0);
@@ -1000,7 +1019,7 @@ test("a segment label stays anchored at the authored routing region", async () =
     : label.y >= Math.min(segment.first.y, segment.second.y) && label.y <= Math.max(segment.first.y, segment.second.y));
 });
 
-test("an authored gap label keeps its region, longitudinal run, and 7px adjacency", async () => {
+test("an authored gap label keeps its region, longitudinal run, and 2px adjacency", async () => {
   const entry = path.join(repo, "examples", "agent-substrate", "diagram.tsx");
   const { scene } = await solveFile(entry);
   const line = scene.lines.find((candidate) => candidate.id === "self-suspend");
@@ -1024,7 +1043,46 @@ test("an authored gap label keeps its region, longitudinal run, and 7px adjacenc
     ? Math.min(Math.abs(label.box.x - segment.first.x), Math.abs(label.box.x + label.box.width - segment.first.x))
     : Math.min(Math.abs(label.box.y - segment.first.y), Math.abs(label.box.y + label.box.height - segment.first.y));
   assert.equal(label.authoredAxis, true);
-  assert.equal(distance, 7);
+  assert.equal(distance, 2);
+});
+
+test("line labels keep the nearest readable edge two pixels from their route", async () => {
+  const vegvisir = await solveFile(path.join(repo, "examples", "vegvisir-voice-agents", "diagram.tsx"));
+  const progress = vegvisir.scene.lines.find((line) => line.id === "progress");
+  const progressLabel = progress.routeLabels[0];
+  assert.equal(progressLabel.box.x - progress.route[0].x, 2);
+  assert.equal(progressLabel.angle, 90);
+  assert.equal(progressLabel.textAnchor, "middle");
+
+  const useCases = await solveFile(path.join(repo, "examples", "uml", "use-case-diagram.tsx"));
+  const include = useCases.scene.lines.find((line) => line.id === "checkout-auth");
+  const includeLabel = include.routeLabels[0];
+  assert.equal(includeLabel.routeAnchor.y - (includeLabel.box.y + includeLabel.box.height), 2);
+});
+
+test("rotated labels at one UML relation remain visibly distinct", async () => {
+  const useCases = await solveFile(path.join(repo, "examples", "uml", "use-case-diagram.tsx"));
+  const labels = useCases.scene.lines.find((line) => line.id === "refund-checkout").routeLabels;
+  assert.equal(labels.length, 2);
+  assert.ok(labels.every((label) => label.angle === 90));
+  assert.ok(labels[0].box.x + labels[0].box.width < labels[1].box.x);
+});
+
+test("an authored gap expands before its label crosses into either neighboring container", async () => {
+  const entry = path.join(repo, "examples", "vegvisir-voice-agents", "diagram.tsx");
+  const { scene } = await solveFile(entry);
+  const line = scene.lines.find((candidate) => candidate.id === "remote-delegation");
+  const label = line.routeLabels[0];
+  const phone = scene.objectByPath.get("system/phone");
+  const agents = scene.objectByPath.get("system/user-owned");
+  const horizontal = line.route.slice(1)
+    .map((point, index) => ({ first: line.route[index], second: point }))
+    .find((segment) => segment.first.y === segment.second.y && segment.second.x === line.to.point.x);
+  assert.ok(horizontal);
+  assert.equal(horizontal.first.y - (label.box.y + label.box.height), 2);
+  assert.ok(label.box.x >= phone.box.x + phone.box.width);
+  assert.ok(label.box.x + label.box.width <= agents.box.x);
+  assert.equal(analyzeScene(scene).labelDecorOverlaps.filter((item) => item.line === line).length, 0);
 });
 
 test("column near-miss stretching and final-width alignment match the reference composition", async () => {

@@ -271,7 +271,9 @@ A **line** is the semantic connection unit.
   - `implicit` — inferred by the normalizer: hierarchy climbs and descents toward the least common ancestor, and connective runs through implicit corridors. Authors never enumerate crossed boundaries.
   - `explicit` — authored pins. An explicit segment either passes `through` a region (a named corridor, `gap(...)`, or `padding(...)`) or `via` a waypoint entity. Explicit segments are where labels live: "this line goes out into the whitespace between the boxes, and the label sits there."
 
-Labels belong to segments and to ends. A segment label has a placement along its segment (`start`, `center`, `end`, `auto`) and an orientation (`upright` or `along` the segment); an end label renders near its dock. A line-level `label` is sugar for an automatically placed label on the line's most prominent run.
+Labels belong to segments and to ends. A segment label has a placement along its segment (`start`, `center`, `end`, `auto`) and an orientation (`auto`, `upright`, or `along` the segment); an end label renders near its dock. Automatic orientation prefers upright text above or below a horizontal run, then text rotated along a vertical run, then upright text beside a vertical run. Upright multiline text beside a vertical run aligns its route-facing edge: left-aligned on the right and right-aligned on the left. A line-level `label` is sugar for an automatically placed label on the line's most prominent run.
+
+A segment label occupies the same semantic container space as its solved run. A label authored in a gap, padding band, or corridor stays inside that region's cross-section. When it does not fit, its measured box enlarges that one whitespace reservation; border clearing may not move it into a neighboring container.
 
 **Structured ends.** Instead of `from`/`to` props, a line may declare its two ends as children — the line then reads literally from end to end, with segments in between:
 
@@ -849,7 +851,7 @@ interface SegmentIR extends EntityBase<"segment"> {
 interface LabelIR {
   text: string;
   placement: "auto" | "start" | "center" | "end";
-  orientation: "upright" | "along";
+  orientation: "auto" | "upright" | "along";
   role?: string;
 }
 ```

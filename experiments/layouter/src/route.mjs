@@ -2552,7 +2552,7 @@ function pushRefinementState(heap, state) {
   heap.push(state);
   for (let index = heap.length - 1; index > 0;) {
     const parent = Math.floor((index - 1) / 2);
-    if (heap[parent].cost <= heap[index].cost) break;
+    if ((heap[parent].priority ?? heap[parent].cost) <= (heap[index].priority ?? heap[index].cost)) break;
     [heap[parent], heap[index]] = [heap[index], heap[parent]];
     index = parent;
   }
@@ -2567,14 +2567,227 @@ function popRefinementState(heap) {
       const left = index * 2 + 1;
       const right = left + 1;
       let next = index;
-      if (left < heap.length && heap[left].cost < heap[next].cost) next = left;
-      if (right < heap.length && heap[right].cost < heap[next].cost) next = right;
+      if (left < heap.length && (heap[left].priority ?? heap[left].cost) < (heap[next].priority ?? heap[next].cost)) next = left;
+      if (right < heap.length && (heap[right].priority ?? heap[right].cost) < (heap[next].priority ?? heap[next].cost)) next = right;
       if (next === index) break;
       [heap[index], heap[next]] = [heap[next], heap[index]];
       index = next;
     }
   }
   return first;
+}
+
+function pointInsideChannelCell(point, cell) {
+  const box = cell.geometry;
+  return point.x >= box.x - 0.001 && point.x <= box.x + box.width + 0.001
+    && point.y >= box.y - 0.001 && point.y <= box.y + box.height + 0.001;
+}
+
+function channelOwnerSet(line) {
+  const owners = new Set();
+  for (const endpoint of [line.from, line.to]) {
+    for (let object = endpoint.object; object; object = object.parent) owners.add(object);
+  }
+  return owners;
+}
+
+function channelCellsAtPoint(scene, point, owners) {
+  return scene.channelMesh.filter((cell) => owners.has(cell.owner) && pointInsideChannelCell(point, cell))
+    .sort((first, second) => first.geometry.width * first.geometry.height - second.geometry.width * second.geometry.height
+      || first.key.localeCompare(second.key));
+}
+
+function channelCellSpine(scene, line, cell) {
+  for (const track of line.regionTracks?.values() ?? []) {
+    const allocation = track.allocation;
+    if (!allocation) continue;
+    const trackCell = scene.channelCellByKey.get(allocation.trackCellKey);
+    if (trackCell?.slotKey === cell.slotKey && allocation.axis === cell.geometry.axis) return allocation.coordinate;
+  }
+  if (cell.geometry.axis === "vertical") return cell.geometry.x + cell.geometry.width / 2;
+  if (cell.geometry.axis === "horizontal") return cell.geometry.y + cell.geometry.height / 2;
+  return null;
+}
+
+function channelPortalPoint(scene, line, first, second, portal) {
+  const values = [];
+  if (portal.boundaryAxis === "vertical") {
+    if (first.geometry.axis === "horizontal") values.push(channelCellSpine(scene, line, first));
+    if (second.geometry.axis === "horizontal") values.push(channelCellSpine(scene, line, second));
+    const coordinate = values.length
+      ? values.reduce((sum, value) => sum + value, 0) / values.length
+      : (portal.start + portal.end) / 2;
+    return { x: portal.coordinate, y: Math.max(portal.start, Math.min(portal.end, coordinate)) };
+  }
+  if (first.geometry.axis === "vertical") values.push(channelCellSpine(scene, line, first));
+  if (second.geometry.axis === "vertical") values.push(channelCellSpine(scene, line, second));
+  const coordinate = values.length
+    ? values.reduce((sum, value) => sum + value, 0) / values.length
+    : (portal.start + portal.end) / 2;
+  return { x: Math.max(portal.start, Math.min(portal.end, coordinate)), y: portal.coordinate };
+}
+
+function channelCellInteriorRoute(scene, line, cell, start, end) {
+  if (samePoint(start, end)) return [start];
+  if (start.x === end.x || start.y === end.y) return [start, end];
+  const spine = channelCellSpine(scene, line, cell);
+  if (cell.geometry.axis === "vertical") {
+    return [start, { x: spine, y: start.y }, { x: spine, y: end.y }, end];
+  }
+  if (cell.geometry.axis === "horizontal") {
+    return [start, { x: start.x, y: spine }, { x: end.x, y: spine }, end];
+  }
+  const horizontalFirst = [start, { x: end.x, y: start.y }, end];
+  const verticalFirst = [start, { x: start.x, y: end.y }, end];
+  return routeLengthAndBends(horizontalFirst).bends <= routeLengthAndBends(verticalFirst).bends
+    ? horizontalFirst : verticalFirst;
+}
+
+function channelRouteDirection(first, second) {
+  if (samePoint(first, second)) return null;
+  return first.y === second.y ? "horizontal" : "vertical";
+}
+
+function channelRouteCost(points, incomingDirection = null) {
+  const normalized = simplify(points);
+  const geometry = routeLengthAndBends(normalized);
+  let firstDirection = null;
+  let lastDirection = incomingDirection;
+  for (let index = 1; index < normalized.length; index += 1) {
+    const direction = channelRouteDirection(normalized[index - 1], normalized[index]);
+    if (!direction) continue;
+    firstDirection ??= direction;
+    lastDirection = direction;
+  }
+  const entryBend = incomingDirection && firstDirection && incomingDirection !== firstDirection ? 1 : 0;
+  return {
+    cost: geometry.length + (geometry.bends + entryBend) * 18,
+    lastDirection,
+    points: normalized,
+  };
+}
+
+function channelGraphStateKey(cellKey, point, direction) {
+  return `${cellKey}:${Math.round(point.x * 1000)}:${Math.round(point.y * 1000)}:${direction ?? "none"}`;
+}
+
+// Select the coarse itinerary on the canonical sparse channel mesh. A search
+// state is an exact cell-entry point plus the incoming route direction. Every
+// transition is costed using the same centered in-cell geometry that will be
+// emitted, so the graph cannot prefer a detour hidden by cell-center proxies.
+function channelGraphPiece(scene, line, start, end) {
+  const owners = channelOwnerSet(line);
+  const starts = channelCellsAtPoint(scene, start, owners);
+  const ends = channelCellsAtPoint(scene, end, owners);
+  if (!starts.length || !ends.length) return null;
+  const endKeys = new Set(ends.map((cell) => cell.key));
+  const states = new Map();
+  const heap = [];
+  for (const cell of starts) {
+    const key = channelGraphStateKey(cell.key, start, null);
+    const state = {
+      key,
+      cellKey: cell.key,
+      entryPoint: start,
+      direction: null,
+      cost: 0,
+      previous: null,
+      routeFromPrevious: null,
+      throughCellKey: null,
+    };
+    state.priority = Math.abs(end.x - start.x) + Math.abs(end.y - start.y);
+    if (states.get(key)?.cost <= state.cost) continue;
+    states.set(key, state);
+    pushRefinementState(heap, state);
+  }
+  let result = null;
+  while (heap.length) {
+    const current = popRefinementState(heap);
+    if (states.get(current.key) !== current) continue;
+    if (current.terminal) {
+      result = current;
+      break;
+    }
+    const cell = scene.channelCellByKey.get(current.cellKey);
+    if (endKeys.has(cell.key)) {
+      const terminalRoute = channelRouteCost(
+        channelCellInteriorRoute(scene, line, cell, current.entryPoint, end),
+        current.direction,
+      );
+      const terminal = {
+        key: `terminal:${current.key}`,
+        terminal: true,
+        cost: current.cost + terminalRoute.cost,
+        priority: current.cost + terminalRoute.cost,
+        previous: current,
+        routeFromPrevious: terminalRoute.points,
+        throughCellKey: cell.key,
+      };
+      states.set(terminal.key, terminal);
+      pushRefinementState(heap, terminal);
+    }
+    for (const portal of cell.portals) {
+      const neighbor = scene.channelCellByKey.get(portal.to);
+      if (!neighbor || !owners.has(neighbor.owner)) continue;
+      const exitPoint = channelPortalPoint(scene, line, cell, neighbor, portal);
+      const localRoute = channelRouteCost(
+        channelCellInteriorRoute(scene, line, cell, current.entryPoint, exitPoint),
+        current.direction,
+      );
+      const cost = current.cost + localRoute.cost;
+      const key = channelGraphStateKey(neighbor.key, exitPoint, localRoute.lastDirection);
+      if (states.get(key)?.cost <= cost) continue;
+      const next = {
+        key,
+        cellKey: neighbor.key,
+        entryPoint: exitPoint,
+        direction: localRoute.lastDirection,
+        cost,
+        priority: cost + Math.abs(end.x - exitPoint.x) + Math.abs(end.y - exitPoint.y),
+        previous: current,
+        routeFromPrevious: localRoute.points,
+        throughCellKey: cell.key,
+      };
+      states.set(key, next);
+      pushRefinementState(heap, next);
+    }
+  }
+  if (!result) return null;
+  const transitions = [];
+  for (let state = result; state?.previous; state = state.previous) transitions.push(state);
+  transitions.reverse();
+  const points = [start];
+  const cellKeys = [];
+  for (const transition of transitions) {
+    points.push(...transition.routeFromPrevious.slice(1));
+    if (cellKeys.at(-1) !== transition.throughCellKey) cellKeys.push(transition.throughCellKey);
+  }
+  const route = refinementCandidate(points, line);
+  route.channelCellPath = cellKeys;
+  return route;
+}
+
+function channelGraphRoute(scene, line) {
+  const fromShared = existingSharedTerminalPath(line, line.from);
+  const toShared = existingSharedTerminalPath(line, line.to);
+  const fromFixed = fromShared ?? [line.from.point, escapePoint(line.from, line.from.routeEscapeDistance)];
+  const toFixed = toShared ? [...toShared].reverse() : [escapePoint(line.to, line.to.routeEscapeDistance), line.to.point];
+  const required = (line.requiredRoutePins ?? []).filter((pin) =>
+    !routeContainsPoint(fromFixed, pin) && !routeContainsPoint(toFixed, pin));
+  const waypoints = [fromFixed.at(-1), ...required, toFixed[0]]
+    .filter((point, index, points) => index === 0 || !samePoint(point, points[index - 1]));
+  const interior = [waypoints[0]];
+  const cellPath = [];
+  for (let index = 1; index < waypoints.length; index += 1) {
+    const piece = channelGraphPiece(scene, line, waypoints[index - 1], waypoints[index]);
+    if (!piece) return null;
+    interior.push(...piece.slice(1));
+    cellPath.push(...piece.channelCellPath.filter((key, cellIndex) =>
+      !cellPath.length || cellIndex > 0 || cellPath.at(-1) !== key));
+  }
+  const route = refinementCandidate([...fromFixed, ...interior.slice(1), ...toFixed.slice(1)], line);
+  route.channelCellPath = cellPath;
+  return route;
 }
 
 function refinementGridPiece(scene, line, objectIndex, routeIndex, currentCrossings, start, end) {
@@ -2707,8 +2920,16 @@ function refineIncrementalRoute(scene, line, objectIndex, routeIndex) {
   let bestCrossings = current.crossings.length;
   let bestGeometry = routeLengthAndBends(best);
   const candidates = crossingRefinementCandidates(scene, line, objectIndex, routeIndex, current.crossings);
-  const grid = refinementGridRoute(scene, line, objectIndex, routeIndex, current.crossings);
+  const graph = channelGraphRoute(scene, line);
+  if (graph) line.coarseCellPath = graph.channelCellPath;
+  const normalizedGraph = graph ? normalizedRefinementCandidate(line, graph) : null;
+  const graphBlocked = normalizedGraph && (hasImmediateReverse(normalizedGraph)
+    || candidateHitsObstacle(normalizedGraph, objectIndex, ignored, line));
+  const grid = !graph || graphBlocked
+    ? refinementGridRoute(scene, line, objectIndex, routeIndex, current.crossings)
+    : null;
   if (grid) candidates.unshift(grid);
+  if (graph) candidates.unshift(graph);
   for (const rawCandidate of candidates) {
     const candidate = normalizedRefinementCandidate(line, rawCandidate);
     if (!routeContainsRequiredPins(line, candidate)
@@ -2769,9 +2990,17 @@ function refineRouteCrossings(scene, objectIndex) {
       let bestCost = bestGeometry.length + bestGeometry.bends * 18 + bestCrossings * CROSSING_REFINEMENT_PENALTY;
       const currentCost = bestCost;
       const ignored = ignoredObjects(entry.line, objectIndex);
-      const grid = refinementGridRoute(scene, entry.line, objectIndex, routeIndex, current.crossings);
+      const graph = channelGraphRoute(scene, entry.line);
+      if (graph) entry.line.coarseCellPath = graph.channelCellPath;
+      const normalizedGraph = graph ? normalizedRefinementCandidate(entry.line, graph) : null;
+      const graphBlocked = normalizedGraph && (hasImmediateReverse(normalizedGraph)
+        || candidateHitsObstacle(normalizedGraph, objectIndex, ignored, entry.line));
+      const grid = !graph || graphBlocked
+        ? refinementGridRoute(scene, entry.line, objectIndex, routeIndex, current.crossings)
+        : null;
       const candidates = crossingRefinementCandidates(scene, entry.line, objectIndex, routeIndex, current.crossings);
       if (grid) candidates.unshift(grid);
+      if (graph) candidates.unshift(graph);
       for (const rawCandidate of candidates) {
         const candidate = normalizedRefinementCandidate(entry.line, rawCandidate);
         const pins = routeContainsRequiredPins(entry.line, candidate);
@@ -2892,9 +3121,14 @@ function positionAlong(segment, ratio) {
   };
 }
 
-function pointLabelCandidates(point, horizontal, label, size, rank, directionalOffsets = new Map()) {
-  const baseOffsets = [7, 18, 32, 48, 72, 96];
-  const angle = label.orientation === "along" && !horizontal ? 90 : 0;
+function labelAngles(horizontal, label) {
+  if (horizontal || label.orientation === "upright") return [0];
+  if (label.orientation === "along") return [90];
+  return [90, 0];
+}
+
+function pointLabelCandidates(point, horizontal, label, size, rank, directionalOffsets = new Map(), angle = 0) {
+  const baseOffsets = [2, 10, 18, 32, 48, 72, 96];
   const visualWidth = angle ? size.height : size.width;
   const visualHeight = angle ? size.width : size.height;
   return [-1, 1].flatMap((direction) => {
@@ -2905,6 +3139,10 @@ function pointLabelCandidates(point, horizontal, label, size, rank, directionalO
       width: visualWidth,
       height: visualHeight,
       angle,
+      textAnchor: angle || horizontal ? "middle" : direction < 0 ? "end" : "start",
+      perpendicularDistance: offset,
+      routeAnchor: point,
+      routeHorizontal: horizontal,
       rank: rank + offsetIndex * 0.1,
     }));
   });
@@ -2922,9 +3160,8 @@ function boundedLocalValues(values, limit, preferred) {
 // A dense row may occupy every short perpendicular label offset. Query only
 // a bounded local band, then add the exact offsets that clear nearby boxes;
 // this stays deterministic and avoids a canvas-wide candidate search.
-function localLabelOptions(segment, label, size, objectIndex) {
+function localLabelOptions(segment, label, size, objectIndex, angle = 0) {
   const horizontal = segment.first.y === segment.second.y;
-  const angle = label.orientation === "along" && !horizontal ? 90 : 0;
   const visualWidth = angle ? size.height : size.width;
   const visualHeight = angle ? size.width : size.height;
   const radius = Math.max(128, Math.min(320, Math.max(visualWidth, visualHeight) * 5));
@@ -2979,12 +3216,15 @@ function segmentLabelCandidates(segment, label, size, rank, objectIndex) {
   const baseRatios = label.placement === "start" ? [0.2, 0.35]
     : label.placement === "end" ? [0.8, 0.65]
     : [0.5, 0.35, 0.65, 0.25, 0.75, 0.15, 0.85];
-  const local = localLabelOptions(segment, label, size, objectIndex);
-  const ratios = label.placement === "start" || label.placement === "end"
-    ? baseRatios
-    : [...baseRatios, ...local.ratios];
-  return ratios.flatMap((ratio, ratioIndex) =>
-    pointLabelCandidates(positionAlong(segment, ratio), horizontal, label, size, rank + ratioIndex * 0.05, local.offsets));
+  return labelAngles(horizontal, label).flatMap((angle, angleIndex) => {
+    const local = localLabelOptions(segment, label, size, objectIndex, angle);
+    const ratios = label.placement === "start" || label.placement === "end"
+      ? baseRatios
+      : [...baseRatios, ...local.ratios];
+    return ratios.flatMap((ratio, ratioIndex) =>
+      pointLabelCandidates(positionAlong(segment, ratio), horizontal, label, size,
+        rank + angleIndex * 0.75 + ratioIndex * 0.05, local.offsets, angle));
+  });
 }
 
 function authoredSegmentRegions(scene, authored) {
@@ -3011,11 +3251,11 @@ function segmentRegionPoint(segment, geometry) {
   return start <= end ? { x: segment.first.x, y: (start + end) / 2 } : null;
 }
 
-function authoredRunPoints(segment, geometry, anchor, label, size) {
+function authoredRunPoints(segment, geometry, anchor, size, angle) {
   const horizontal = segment.first.y === segment.second.y;
   const start = horizontal ? Math.min(segment.first.x, segment.second.x) : Math.min(segment.first.y, segment.second.y);
   const end = horizontal ? Math.max(segment.first.x, segment.second.x) : Math.max(segment.first.y, segment.second.y);
-  const alongExtent = horizontal ? size.width : label.orientation === "along" ? size.width : size.height;
+  const alongExtent = horizontal ? angle ? size.height : size.width : angle ? size.width : size.height;
   const half = alongExtent / 2;
   // The label center belongs to the solved run; its box may overhang a short
   // run into adjacent free space. Requiring the whole label to fit between
@@ -3038,7 +3278,7 @@ function authoredRunPoints(segment, geometry, anchor, label, size) {
     high - half - 16,
     low,
     high,
-  ].map(clamp).concat([start - half - 8, end + half + 8]);
+  ].map(clamp);
   const unique = [...new Set(values.map((value) => Math.round(value * 2) / 2))]
     .sort((first, second) => Math.abs(first - anchorValue) - Math.abs(second - anchorValue) || first - second);
   return unique.map((value) => horizontal ? { x: value, y: anchor.y } : { x: anchor.x, y: value });
@@ -3059,19 +3299,22 @@ function authoredSegmentLabelCandidates(scene, line, label, size, objectIndex) {
         const routeRank = label.placement === "start" ? segment.index
           : label.placement === "end" ? lastIndex - segment.index
           : label.placement === "center" ? followsRegionAxis ? 0 : 1 + prominence
-          : prominence;
+          : followsRegionAxis ? prominence : 2 + prominence;
         const point = segmentRegionPoint(segment, geometry);
         if (point) {
-          const directionalOffsets = localLabelOptions(segment, label, size, objectIndex).offsets;
-          for (const [rank, runPoint] of authoredRunPoints(segment, geometry, point, label, size).entries()) {
-            candidates.push(...pointLabelCandidates(runPoint, segmentHorizontal, label, size, -4 + routeRank * 0.2 + rank * 0.02, directionalOffsets)
-              .map((candidate) => ({
-                ...candidate,
-                authoredRegion: region,
-                authoredCell: cell,
-                authoredRun: segment.index,
-                authoredAxis: followsRegionAxis,
-              })));
+          for (const [angleIndex, angle] of labelAngles(segmentHorizontal, label).entries()) {
+            const directionalOffsets = localLabelOptions(segment, label, size, objectIndex, angle).offsets;
+            for (const [rank, runPoint] of authoredRunPoints(segment, geometry, point, size, angle).entries()) {
+              candidates.push(...pointLabelCandidates(runPoint, segmentHorizontal, label, size,
+                -4 + routeRank * 0.2 + angleIndex * 0.75 + rank * 0.02, directionalOffsets, angle)
+                .map((candidate) => ({
+                  ...candidate,
+                  authoredRegion: region,
+                  authoredCell: cell,
+                  authoredRun: segment.index,
+                  authoredAxis: followsRegionAxis,
+                })));
+            }
           }
         }
       }
@@ -3106,13 +3349,13 @@ function endpointLabelCandidates(endpoint, label, size, rank) {
 
 function labelSpecs(line) {
   const specs = [];
-  if (line.label != null) specs.push({ text: line.label, placement: "auto", orientation: "upright" });
-  specs.push(...line.labels.map((label) => ({ placement: "auto", orientation: "upright", ...label })));
+  if (line.label != null) specs.push({ text: line.label, placement: "auto", orientation: "auto" });
+  specs.push(...line.labels.map((label) => ({ placement: "auto", orientation: "auto", ...label })));
   for (const segment of line.segments) {
     if (segment.label != null) specs.push({
       text: segment.label,
       placement: segment.labelPlacement ?? "auto",
-      orientation: segment.labelOrientation ?? "upright",
+      orientation: segment.labelOrientation ?? "auto",
       authoredSegment: segment,
     });
   }
@@ -3154,8 +3397,50 @@ function labelCoversAuthorizedSharedRun(candidate, line, segment) {
   return false;
 }
 
+function labelContainerAtPoint(scene, point) {
+  let result = null;
+  let depth = -1;
+  for (const object of scene.objects) {
+    if (!object.visible || ["diagram", "row", "column", "grid", "legend"].includes(object.kind)) continue;
+    if (object.children.length === 0 && !object.frame) continue;
+    const box = object.box;
+    if (point.x <= box.x + 1 || point.x >= box.x + box.width - 1
+      || point.y <= box.y + 1 || point.y >= box.y + box.height - 1) continue;
+    let objectDepth = 0;
+    for (let parent = object.parent; parent; parent = parent.parent) objectDepth += 1;
+    if (objectDepth > depth) {
+      result = object;
+      depth = objectDepth;
+    }
+  }
+  return result;
+}
+
+function labelSharesRouteContainer(candidate, scene) {
+  if (!candidate.routeAnchor) return true;
+  const labelCenter = { x: candidate.x + candidate.width / 2, y: candidate.y + candidate.height / 2 };
+  return labelContainerAtPoint(scene, labelCenter) === labelContainerAtPoint(scene, candidate.routeAnchor);
+}
+
+function labelFitsAuthoredRegion(candidate) {
+  if (!candidate.authoredRegion) return true;
+  const geometry = regionGeometry(candidate.authoredRegion);
+  const clearance = 2;
+  return geometry.axis === "vertical"
+    ? candidate.x >= geometry.x + clearance
+      && candidate.x + candidate.width <= geometry.x + geometry.width - clearance
+    : candidate.y >= geometry.y + clearance
+      && candidate.y + candidate.height <= geometry.y + geometry.height - clearance;
+}
+
 function labelCandidateScore(candidate, line, scene, objectIndex, labelIndex, borderIndex, routeIndex) {
-  let score = candidate.rank * 40;
+  // A label belongs to a line before it belongs to an empty pocket elsewhere.
+  // Make perpendicular displacement expensive enough that a nearby fallback
+  // segment beats a remotely cleared candidate from an otherwise preferred
+  // authored run.
+  let score = candidate.rank * 40 + (candidate.perpendicularDistance ?? 0) * 8;
+  if (!labelSharesRouteContainer(candidate, scene)) score += 500000;
+  if (!labelFitsAuthoredRegion(candidate)) score += 500000;
   if (candidate.x < 4 || candidate.y < 4 || candidate.x + candidate.width > scene.width - 4 || candidate.y + candidate.height > scene.height - 4) score += 100000;
   for (const object of objectIndex.queryBox(candidate)) if (boxesOverlap(candidate, object.box, 2)) score += 100000;
   for (const label of labelIndex.queryBox(candidate)) if (boxesOverlap(candidate, label.box, 4)) score += 150000;
@@ -3191,11 +3476,24 @@ function borderClearingCandidates(candidates, borderIndex) {
             { x: candidate.x, y: ring.box.y - clearance - candidate.height },
             { x: candidate.x, y: ring.box.y + ring.box.height + clearance },
           ];
-      result.push(...shifts.map((shift, index) => ({
-        ...candidate,
-        ...shift,
-        rank: candidate.rank + 0.02 + index * 0.01,
-      })));
+      result.push(...shifts.map((shift, index) => {
+        const shifted = {
+          ...candidate,
+          ...shift,
+          rank: candidate.rank + 0.02 + index * 0.01,
+        };
+        if (candidate.routeAnchor) {
+          shifted.perpendicularDistance = candidate.routeHorizontal
+            ? Math.min(Math.abs(shifted.y - candidate.routeAnchor.y), Math.abs(shifted.y + shifted.height - candidate.routeAnchor.y))
+            : Math.min(Math.abs(shifted.x - candidate.routeAnchor.x), Math.abs(shifted.x + shifted.width - candidate.routeAnchor.x));
+          if (!candidate.angle && !candidate.routeHorizontal) {
+            shifted.textAnchor = shifted.x >= candidate.routeAnchor.x ? "start"
+              : shifted.x + shifted.width <= candidate.routeAnchor.x ? "end"
+              : "middle";
+          }
+        }
+        return shifted;
+      }));
     }
   }
   return result;
@@ -3241,6 +3539,7 @@ function placeAllLabels(scene, objectIndex) {
         labelCandidateScore(first, line, scene, objectIndex, labelIndex, borderIndex, routeIndex)
         - labelCandidateScore(second, line, scene, objectIndex, labelIndex, borderIndex, routeIndex));
       const chosen = candidates[0];
+      chosen.outsideAuthoredRegion = !labelFitsAuthoredRegion(chosen);
       const authoredAxisCandidates = spec.placement === "center" && !chosen.authoredAxis
         ? candidates.filter((candidate) => candidate.authoredRegion && candidate.authoredAxis)
         : [];
@@ -3255,26 +3554,36 @@ function placeAllLabels(scene, objectIndex) {
           return (layout === "row" || layout === "column") && boxesOverlap(candidate, ring.box, 2);
         }));
       const rejectedAuthoredCandidate = locallyBlocked ?? authoredAxisCandidates[0] ?? null;
+      let cursorX = chosen.x;
       let cursorY = chosen.y;
       specs.forEach((item, index) => {
         const itemSize = sizes[index];
+        const visualSize = chosen.angle
+          ? { width: itemSize.height, height: itemSize.width }
+          : itemSize;
         const box = {
-          x: chosen.x + (chosen.width - itemSize.width) / 2,
-          y: cursorY,
-          width: itemSize.width,
-          height: itemSize.height,
+          x: chosen.angle ? cursorX : chosen.x + (chosen.width - visualSize.width) / 2,
+          y: chosen.angle ? chosen.y + (chosen.height - visualSize.height) / 2 : cursorY,
+          width: visualSize.width,
+          height: visualSize.height,
         };
+        const textAnchor = chosen.textAnchor ?? "middle";
+        const textX = textAnchor === "start" ? box.x + 5
+          : textAnchor === "end" ? box.x + box.width - 5
+          : box.x + box.width / 2;
         const placed = {
           ...item,
           ...chosen,
           rejectedAuthoredCandidate,
-          x: box.x + box.width / 2,
+          x: textX,
           y: box.y + box.height / 2,
+          textAnchor,
           box,
         };
         line.routeLabels.push(placed);
         labelIndex.insert({ box, line, label: placed });
-        cursorY += itemSize.height + 4;
+        if (chosen.angle) cursorX += itemSize.height + 4;
+        else cursorY += itemSize.height + 4;
       });
     }
   }
@@ -3301,14 +3610,7 @@ export function containerBorderRings(scene) {
 }
 
 export function labelMayCrossContainerBorder(label, ring) {
-  const region = label.authoredRegion;
-  if (ring.kind !== "container-border" || region?.kind !== "gap") return false;
-  const members = region.owner.children.filter((child) => !child.anchor && !child.frame);
-  const left = members[region.index];
-  const right = members[region.index + 1];
-  const inside = (object, branch) => object === branch || hasAncestor(object, branch);
-  return ring.side === "right" && left && inside(ring.owner, left)
-    || ring.side === "left" && right && inside(ring.owner, right);
+  return false;
 }
 
 export function route(scene) {

@@ -462,7 +462,7 @@ export function normalize(rootExpr) {
         const sp = seg.props;
         const labels = [];
         if (sp.label != null)
-          labels.push({ text: sp.label, placement: "auto", orientation: sp.labelOrientation ?? "upright" });
+          labels.push({ text: sp.label, placement: "auto", orientation: sp.labelOrientation ?? "auto" });
         if (sp.through != null) {
           const region = typeof sp.through === "string" ? { kind: "corridor", corridor: sp.through } : resolveRegion(rec, sp.through);
           if (region) entity.segments.push(segment({ kind: "through", region }, "explicit", labels));
