@@ -6,7 +6,7 @@ import { performance } from "node:perf_hooks";
 import { test } from "node:test";
 import { layout } from "../src/layout.mjs";
 import { minimumHeadRun, normalizedHeads } from "../src/heads.mjs";
-import { boundaryLabelStrips } from "../src/mesh.mjs";
+import { boundaryLabelStrips, regionGeometry } from "../src/mesh.mjs";
 import { solveFile } from "../src/pipeline.mjs";
 import { project } from "../src/project.mjs";
 import { analyzeScene } from "../src/quality.mjs";
@@ -164,16 +164,17 @@ test("each side has one boundary-reaching padding band whose corners use the sam
   }
 });
 
-test("derived gap cells use facing overlap while active routing keeps its larger approach geometry", async () => {
+test("derived gap cells separate the facing track from canonical approach cells", async () => {
   const entry = path.join(repo, "examples", "agent-substrate", "diagram.tsx");
   const { scene } = await solveFile(entry);
   const gap = scene.channelMesh.find((cell) =>
     cell.key === "mesh:gap:cluster/layers/control-and-storage/substrate-control:0");
   assert.ok(gap.materialized);
-  assert.ok(gap.geometry.x > gap.routingGeometry.x);
-  assert.ok(gap.geometry.x + gap.geometry.width < gap.routingGeometry.x + gap.routingGeometry.width);
+  assert.equal("routingGeometry" in gap, false);
   const access = scene.channelMesh.filter((cell) => cell.key.startsWith(`${gap.key}:access-`));
   assert.equal(access.length, 2);
+  assert.ok(Math.min(...access.map((cell) => cell.geometry.x)) < gap.geometry.x);
+  assert.ok(Math.max(...access.map((cell) => cell.geometry.x + cell.geometry.width)) > gap.geometry.x + gap.geometry.width);
   assert.ok(gap.neighbors.some((key) => key.startsWith(`${gap.key}:access-`)));
 });
 
@@ -181,12 +182,32 @@ test("every reserved region binds to canonical mesh cells before routing", async
   const entry = path.join(repo, "examples", "agent-substrate", "diagram.tsx");
   const { scene } = await solveFile(entry);
   for (const region of scene.regions.values()) {
+    assert.equal("geometry" in region, false, `${region.key} retained shadow geometry`);
     assert.ok(region.channelBinding, `${region.key} has no channel binding`);
     assert.ok(region.channelBinding.cellKeys.length > 0, `${region.key} has no channel cells`);
     for (const key of region.channelBinding.cellKeys) assert.ok(scene.channelCellByKey.has(key));
   }
   assert.deepEqual(scene.channelBindings.get("gap:cluster/layers:1").cellKeys,
     ["mesh:grid-column-gap:cluster/layers:1"]);
+  assert.ok(scene.channelMesh.every((cell) => !("routingGeometry" in cell)));
+});
+
+test("track allocations stay inside the exact canonical cells painted by debug output", async () => {
+  const entry = path.join(repo, "examples", "agent-substrate", "diagram.tsx");
+  const { scene } = await solveFile(entry);
+  for (const allocation of scene.trackAllocations.values()) {
+    const trackCell = scene.channelCellByKey.get(allocation.trackCellKey);
+    assert.ok(trackCell);
+    const low = allocation.axis === "vertical" ? trackCell.geometry.x : trackCell.geometry.y;
+    const high = low + (allocation.axis === "vertical" ? trackCell.geometry.width : trackCell.geometry.height);
+    assert.ok(allocation.coordinate >= low && allocation.coordinate <= high);
+    assert.ok(allocation.spans.every((span) => scene.channelCellByKey.has(span.cellKey)));
+  }
+  const line = scene.lines.find((candidate) => candidate.id === "request-to-agent");
+  const ingress = line.regionTracks.get("padding:ingress:right").allocation;
+  const cluster = line.regionTracks.get("padding:cluster:right").allocation;
+  assert.equal(ingress.runId, cluster.runId);
+  assert.equal(ingress.coordinate, cluster.coordinate);
 });
 
 test("channel neighbors retain reciprocal positive-length portal intervals", async () => {
@@ -201,8 +222,19 @@ test("channel neighbors retain reciprocal positive-length portal intervals", asy
         && candidate.boundaryAxis === portal.boundaryAxis
         && candidate.coordinate === portal.coordinate
         && candidate.start === portal.start
-        && candidate.end === portal.end));
+        && candidate.end === portal.end
+        && candidate.kind === portal.kind));
     }
+  }
+  const hierarchyPortals = scene.channelMesh.flatMap((cell) =>
+    cell.portals.filter((portal) => portal.kind === "hierarchy").map((portal) => ({ cell, portal })));
+  assert.ok(hierarchyPortals.length > 0);
+  for (const { cell, portal } of hierarchyPortals) {
+    if (cell.kind !== "corner") continue;
+    const side = portal.boundaryAxis === "vertical"
+      ? portal.coordinate === cell.geometry.x ? "left" : "right"
+      : portal.coordinate === cell.geometry.y ? "top" : "bottom";
+    assert.ok(cell.outwardSides.includes(side), `${cell.key} exits through ${side}`);
   }
 });
 
@@ -271,8 +303,9 @@ test("padding tracks occupy reserved inner padding instead of a container border
   const cluster = scene.objectByPath.get("cluster");
   const track = [...scene.regions.values()].find((region) => region.kind === "padding" && region.owner === cluster && region.side === "top");
   const title = boundaryLabelStrips(scene).find((strip) => strip.owner === cluster);
-  assert.ok(track.geometry.y >= title.box.y + title.box.height);
-  assert.ok(track.geometry.y > cluster.box.y + 3);
+  const geometry = regionGeometry(track);
+  assert.ok(geometry.y >= title.box.y + title.box.height);
+  assert.ok(geometry.y > cluster.box.y + 3);
 });
 
 test("an authored padding route keeps its main run on the reserved track", async () => {
@@ -282,7 +315,8 @@ test("an authored padding route keeps its main run on the reserved track", async
   const cluster = scene.objectByPath.get("cluster");
   const track = [...scene.regions.values()].find((region) =>
     region.kind === "padding" && region.owner === cluster && region.side === "top");
-  const trackY = track.geometry.y + track.geometry.height / 2;
+  const geometry = regionGeometry(track);
+  const trackY = geometry.y + geometry.height / 2;
   const horizontal = line.route.slice(1)
     .map((point, index) => ({ first: line.route[index], second: point }))
     .find((segment) => segment.first.y === segment.second.y && segment.first.y === trackY);
@@ -306,8 +340,10 @@ test("hierarchical route itinerary leaves a source before crossing its parent ga
   const line = scene.lines.find((candidate) => candidate.id === "request-to-agent");
   const ingressRight = [...scene.regions.values()].find((region) => region.kind === "padding" && region.owner.path === "ingress" && region.side === "right");
   const rootGap = [...scene.regions.values()].find((region) => region.kind === "gap" && region.owner === scene.root && region.entryLines.has(line));
-  const firstIngressPin = line.pinPoints.findIndex((point) => point.x >= ingressRight.geometry.x && point.x <= ingressRight.geometry.x + ingressRight.geometry.width);
-  const firstGapPin = line.pinPoints.findIndex((point) => point.y >= rootGap.geometry.y && point.y <= rootGap.geometry.y + rootGap.geometry.height);
+  const ingressGeometry = regionGeometry(ingressRight);
+  const gapGeometry = regionGeometry(rootGap);
+  const firstIngressPin = line.pinPoints.findIndex((point) => point.x >= ingressGeometry.x && point.x <= ingressGeometry.x + ingressGeometry.width);
+  const firstGapPin = line.pinPoints.findIndex((point) => point.y >= gapGeometry.y && point.y <= gapGeometry.y + gapGeometry.height);
   assert.ok(firstIngressPin >= 0 && firstIngressPin < firstGapPin);
 });
 
@@ -339,9 +375,10 @@ test("nested explicit segment regions remain monotone from source to target", as
     assert.ok(line.route[index].x <= line.route[index - 1].x, "self-suspend backtracks across an authored region");
   }
   const outerGap = [...scene.regions.values()].find((region) => region.key === "gap:cluster/layers:1");
+  const outerGeometry = regionGeometry(outerGap);
   const firstVertical = line.route.slice(1).map((point, index) => ({ first: line.route[index], second: point }))
     .find((segment) => segment.first.x === segment.second.x && segment.first.y !== segment.second.y);
-  assert.ok(firstVertical.first.x >= outerGap.geometry.x && firstVertical.first.x <= outerGap.geometry.x + outerGap.geometry.width);
+  assert.ok(firstVertical.first.x >= outerGeometry.x && firstVertical.first.x <= outerGeometry.x + outerGeometry.width);
 });
 
 test("perpendicular crossings do not displace a longitudinal corridor track from center", async () => {
@@ -356,11 +393,12 @@ test("perpendicular crossings do not displace a longitudinal corridor track from
   assert.equal(selfTrack.total, 1);
   assert.equal(checkpoint.regionTracks.get(region.key).crossing, true);
   assert.equal(resume.regionTracks.get(region.key).crossing, true);
-  const center = region.geometry.x + region.geometry.width / 2;
+  const geometry = regionGeometry(region);
+  const center = geometry.x + geometry.width / 2;
   const longitudinal = selfSuspend.route.slice(1)
     .map((point, index) => ({ first: selfSuspend.route[index], second: point }))
     .filter(({ first, second }) => first.x === second.x && first.y !== second.y)
-    .find(({ first }) => first.x >= region.geometry.x && first.x <= region.geometry.x + region.geometry.width);
+    .find(({ first }) => first.x >= geometry.x && first.x <= geometry.x + geometry.width);
   assert.equal(longitudinal.first.x, center);
 });
 
@@ -395,10 +433,9 @@ test("longitudinal corridor tracks form a centered geometry-ordered bundle", asy
   assert.deepEqual(entries.map(({ entry }) => entry.line.id), ["probe-upright", "audit-upright", "audit-rotated"]);
   const projected = entries.map(({ entry }) => (entry.line.from.point.x + entry.line.to.point.x) / 2);
   assert.deepEqual(projected, [...projected].sort((first, second) => first - second));
-  const coordinates = entries.map(({ track }) =>
-    region.geometry.x + region.geometry.width / 2
-      + (track.index - (track.total - 1) / 2) * region.spacing);
-  assert.equal((coordinates[0] + coordinates.at(-1)) / 2, region.geometry.x + region.geometry.width / 2);
+  const geometry = regionGeometry(region);
+  const coordinates = entries.map(({ track }) => track.allocation.coordinate);
+  assert.equal((coordinates[0] + coordinates.at(-1)) / 2, geometry.x + geometry.width / 2);
 });
 
 test("authored run candidates avoid label-driven grid inflation", async () => {

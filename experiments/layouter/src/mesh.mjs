@@ -5,7 +5,11 @@ function flowChildren(object) {
 }
 
 function layoutKind(object) {
-  return object.layout?.kind ?? (["scope", "diagram"].includes(object.kind) ? "column" : object.kind);
+  const kind = object.layout?.kind ?? (["scope", "diagram"].includes(object.kind) ? "column" : object.kind);
+  if (Math.abs(object.physicalOrientation ?? 0) % 180 !== 90) return kind;
+  if (kind === "row") return "column";
+  if (kind === "column") return "row";
+  return kind;
 }
 
 function geometry(x, y, width, height, axis) {
@@ -36,7 +40,7 @@ export function boundaryLabelStrips(scene) {
     });
 }
 
-export function regionGeometry(region) {
+function reservedRegionEnvelope(region) {
   if (region.kind === "padding") {
     const box = region.owner.box;
     const clearance = region.clearance ?? 0;
@@ -121,6 +125,7 @@ function subtractResidents(cells, residents) {
 function siblingGapCells(object, index, first, second, axis, active) {
   const key = `mesh:gap:${object.path || "$root"}:${index}`;
   const core = gapBetween(first.box, second.box, axis);
+  const envelope = reservedRegionEnvelope(active ?? { kind: "gap", owner: object, index });
   const common = {
     kind: "gap",
     owner: object,
@@ -128,7 +133,6 @@ function siblingGapCells(object, index, first, second, axis, active) {
     slotKey: key,
     corridors: active?.corridors ?? [],
     regionKeys: active ? [active.key] : [],
-    routingGeometry: active?.geometry ?? null,
   };
   const cells = [{
     ...common,
@@ -137,8 +141,8 @@ function siblingGapCells(object, index, first, second, axis, active) {
     materialized: Boolean(active),
     geometry: core,
   }];
-  if (!active?.geometry || !intersects(active.geometry, core)) return cells;
-  const access = subtractGeometry(active.geometry, core).map((part, partIndex) => ({
+  if (!intersects(envelope, core)) return cells;
+  const access = subtractGeometry(envelope, core).map((part, partIndex) => ({
     ...common,
     key: `${key}:access-${partIndex}`,
     zone: "access",
@@ -149,7 +153,8 @@ function siblingGapCells(object, index, first, second, axis, active) {
 }
 
 // Positive-length shared boundaries form the local, sparse cell adjacency graph.
-function connectBoundary(first, second, firstStart, firstEnd, secondStart, secondEnd, boundaryAxis, coordinate) {
+function connectBoundary(first, second, firstStart, firstEnd, secondStart, secondEnd,
+  boundaryAxis, coordinate, kind = "local", allowed = () => true) {
   const starts = [...first].sort((a, b) => firstStart(a) - firstStart(b));
   const ends = [...second].sort((a, b) => secondStart(a) - secondStart(b));
   let begin = 0;
@@ -157,14 +162,51 @@ function connectBoundary(first, second, firstStart, firstEnd, secondStart, secon
     while (begin < ends.length && secondEnd(ends[begin]) <= firstStart(source)) begin += 1;
     for (let index = begin; index < ends.length && secondStart(ends[index]) < firstEnd(source); index += 1) {
       const target = ends[index];
-      if (source === target) continue;
+      if (source === target || !allowed(source, target)) continue;
       source.neighbors.add(target.key);
       target.neighbors.add(source.key);
       const start = Math.max(firstStart(source), secondStart(target));
       const end = Math.min(firstEnd(source), secondEnd(target));
-      source.portals.push({ to: target.key, boundaryAxis, coordinate, start, end });
-      target.portals.push({ to: source.key, boundaryAxis, coordinate, start, end });
+      source.portals.push({ to: target.key, boundaryAxis, coordinate, start, end, kind });
+      target.portals.push({ to: source.key, boundaryAxis, coordinate, start, end, kind });
     }
+  }
+}
+
+function allowsOutward(cell, side) {
+  return cell.kind === "padding" && cell.side === side
+    || cell.kind === "corner" && cell.outwardSides.includes(side);
+}
+
+function connectHierarchyCells(cells) {
+  const left = new Map();
+  const right = new Map();
+  const top = new Map();
+  const bottom = new Map();
+  for (const cell of cells) {
+    const box = cell.geometry;
+    const add = (map, key) => map.set(key, [...(map.get(key) ?? []), cell]);
+    add(left, box.x);
+    add(right, box.x + box.width);
+    add(top, box.y);
+    add(bottom, box.y + box.height);
+  }
+  const related = (sourceSide, targetSide) => (source, target) =>
+    source.owner !== target.owner && (source.owner.parent === target.owner && allowsOutward(source, sourceSide)
+      || target.owner.parent === source.owner && allowsOutward(target, targetSide));
+  for (const [coordinate, ending] of right) {
+    const starting = left.get(coordinate);
+    if (starting) connectBoundary(ending, starting,
+      (cell) => cell.geometry.y, (cell) => cell.geometry.y + cell.geometry.height,
+      (cell) => cell.geometry.y, (cell) => cell.geometry.y + cell.geometry.height,
+      "vertical", coordinate, "hierarchy", related("right", "left"));
+  }
+  for (const [coordinate, ending] of bottom) {
+    const starting = top.get(coordinate);
+    if (starting) connectBoundary(ending, starting,
+      (cell) => cell.geometry.x, (cell) => cell.geometry.x + cell.geometry.width,
+      (cell) => cell.geometry.x, (cell) => cell.geometry.x + cell.geometry.width,
+      "horizontal", coordinate, "hierarchy", related("bottom", "top"));
   }
 }
 
@@ -205,6 +247,7 @@ function connectChannelCells(cells) {
         "horizontal", coordinate);
     }
   }
+  connectHierarchyCells(cells);
   for (const cell of cells) {
     cell.neighbors = [...cell.neighbors].sort();
     cell.portals.sort((first, second) => first.to.localeCompare(second.to)
@@ -214,7 +257,7 @@ function connectChannelCells(cells) {
 
 function matchingGridRegions(activeGaps, cellGeometry) {
   return activeGaps.filter((region) => {
-    const routeGeometry = region.geometry;
+    const routeGeometry = reservedRegionEnvelope(region);
     return routeGeometry?.axis === cellGeometry.axis
       && routeGeometry.x === cellGeometry.x
       && routeGeometry.y === cellGeometry.y
@@ -282,7 +325,7 @@ function paddingCells(object, activePadding, residents) {
   const sides = Object.fromEntries(SIDES.map((side) => {
     const active = activePadding.get(`${object.path || "$root"}:${side}`);
     const region = active ?? { kind: "padding", owner: object, side, thickness: 0, clearance: 0, corridors: [] };
-    return [side, { region, geometry: active?.geometry ?? regionGeometry(region) }];
+    return [side, { region }];
   }));
   const box = object.box;
   const path = object.path || "$root";
@@ -308,7 +351,6 @@ function paddingCells(object, activePadding, residents) {
     materialized: Boolean(activePadding.get(`${path}:${cell.side}`)),
     corridors: sides[cell.side].region.corridors ?? [],
     regionKeys: activePadding.has(`${path}:${cell.side}`) ? [sides[cell.side].region.key] : [],
-    routingGeometry: sides[cell.side].geometry,
     geometry: cell.geometry,
   }));
   const cornerCells = [
@@ -331,6 +373,31 @@ function paddingCells(object, activePadding, residents) {
   return subtractResidents([...sideCells, ...cornerCells], residents);
 }
 
+function normalExtent(cell) {
+  return cell.geometry.axis === "vertical" ? cell.geometry.width : cell.geometry.height;
+}
+
+function alongExtent(cell) {
+  return cell.geometry.axis === "vertical" ? cell.geometry.height : cell.geometry.width;
+}
+
+// A title can split a padding band. The track uses the surviving free cell
+// nearest the content; gaps use their facing core rather than an approach cell.
+function compareTrackCells(region, first, second) {
+  const innerEdge = (cell) => {
+    const box = cell.geometry;
+    if (region.side === "top") return box.y + box.height;
+    if (region.side === "bottom") return -box.y;
+    if (region.side === "left") return box.x + box.width;
+    if (region.side === "right") return -box.x;
+    return 0;
+  };
+  return innerEdge(second) - innerEdge(first)
+    || alongExtent(second) - alongExtent(first)
+    || normalExtent(second) - normalExtent(first)
+    || first.key.localeCompare(second.key);
+}
+
 function bindRegions(scene) {
   const cellsByRegion = new Map();
   for (const cell of scene.channelMesh) {
@@ -343,10 +410,28 @@ function bindRegions(scene) {
   scene.channelBindings = new Map();
   for (const region of scene.regions.values()) {
     const cellKeys = [...new Set(cellsByRegion.get(region.key) ?? [])].sort();
-    const binding = { key: region.key, region, cellKeys };
+    const cells = cellKeys.map((key) => scene.channelCellByKey.get(key));
+    const coreCells = cells.filter((cell) => cell.zone === "track" || cell.zone === "band");
+    const trackCell = [...coreCells].sort((first, second) => compareTrackCells(region, first, second))[0] ?? null;
+    const binding = {
+      key: region.key,
+      region,
+      axis: trackCell?.geometry.axis ?? null,
+      cellKeys,
+      cells,
+      coreCellKeys: coreCells.map((cell) => cell.key),
+      accessCellKeys: cells.filter((cell) => cell.zone === "access").map((cell) => cell.key),
+      trackCell,
+    };
     region.channelBinding = binding;
     scene.channelBindings.set(region.key, binding);
   }
+}
+
+export function regionGeometry(region) {
+  const geometry = region.channelBinding?.trackCell?.geometry;
+  if (!geometry) throw new Error(`routing region '${region.key}' is not bound to a channel-mesh cell`);
+  return geometry;
 }
 
 export function buildChannelMesh(scene) {

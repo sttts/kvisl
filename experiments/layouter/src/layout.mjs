@@ -327,6 +327,7 @@ export function reserveRoutingSpace(scene) {
       const crossing = entry.usage === "crossing";
       entry.line.regionTracks.set(region.key, {
         region,
+        trackKey: entry.trackKey ?? `line:${entry.line.id}`,
         index: crossing ? 0 : trackIndexByKey.get(entry.trackKey),
         total: crossing ? 1 : trackCount,
         crossing,

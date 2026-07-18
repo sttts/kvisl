@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { boundaryLabelStrips } from "../src/mesh.mjs";
+import { boundaryLabelStrips, regionGeometry } from "../src/mesh.mjs";
 import { solveFile } from "../src/pipeline.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -29,7 +29,8 @@ test("authored padding tracks reserve inner route clearance independently of con
   const layers = scene.objectByPath.get("cluster/layers");
   const top = scene.regions.get("padding:cluster:top");
   const title = boundaryLabelStrips(scene).find((strip) => strip.owner === cluster);
-  const geometryBottom = top.geometry.y + top.geometry.height;
+  const geometry = regionGeometry(top);
+  const geometryBottom = geometry.y + geometry.height;
 
   assert.deepEqual(top.entries.map((entry) => [entry.line.id, entry.usage]), [
     ["ingress-control", "crossing"],
@@ -39,6 +40,6 @@ test("authored padding tracks reserve inner route clearance independently of con
   assert.equal(top.clearance, 12);
   assert.equal(cluster.reserved.padding.top, top.thickness + top.clearance);
   assert.equal(cluster.paddingBox.top - cluster.reserved.padding.top, 22, "content padding remains independent");
-  assert.ok(top.geometry.y >= title.box.y + title.box.height, "the track starts below the title strip");
+  assert.ok(geometry.y >= title.box.y + title.box.height, "the track starts below the title strip");
   assert.equal(layers.box.y - geometryBottom, top.clearance, "the track ends before child content");
 });

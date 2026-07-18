@@ -250,42 +250,180 @@ function alignFacingDocks(scene) {
   }
 }
 
-function trackPoint(track, start, end) {
-  const geometry = track.region.geometry;
-  const offset = (track.index - (track.total - 1) / 2) * track.region.spacing;
-  if (geometry.axis === "vertical") {
-    const x = geometry.x + geometry.width / 2 + offset;
-    const y = Math.max(geometry.y, Math.min(geometry.y + geometry.height, (start.y + end.y) / 2));
-    return { x, y, region: track.region, soft: true, crossing: track.crossing };
-  }
-  const x = Math.max(geometry.x, Math.min(geometry.x + geometry.width, (start.x + end.x) / 2));
-  const y = geometry.y + geometry.height / 2 + offset;
-  return { x, y, region: track.region, soft: true, crossing: track.crossing };
-}
-
-function longitudinalSpan(line, region) {
-  const geometry = region.geometry;
-  let longest = 0;
-  for (let index = 1; index < line.route.length; index += 1) {
-    const first = line.route[index - 1];
-    const second = line.route[index];
-    if (geometry.axis === "vertical") {
-      if (first.x !== second.x || first.x < geometry.x || first.x > geometry.x + geometry.width) continue;
-      const top = Math.max(Math.min(first.y, second.y), geometry.y);
-      const bottom = Math.min(Math.max(first.y, second.y), geometry.y + geometry.height);
-      longest = Math.max(longest, bottom - top);
-    } else {
-      if (first.y !== second.y || first.y < geometry.y || first.y > geometry.y + geometry.height) continue;
-      const left = Math.max(Math.min(first.x, second.x), geometry.x);
-      const right = Math.min(Math.max(first.x, second.x), geometry.x + geometry.width);
-      longest = Math.max(longest, right - left);
+function allocateRegionTracks(scene) {
+  scene.trackAllocations = new Map();
+  for (const region of scene.regions.values()) {
+    const geometry = regionGeometry(region);
+    const groups = new Map();
+    for (const entry of region.entries) {
+      const track = entry.line.regionTracks.get(region.key);
+      if (!track) continue;
+      const allocationKey = track.crossing ? `crossing:${entry.line.id}` : track.trackKey;
+      const group = groups.get(allocationKey) ?? { key: allocationKey, tracks: [], lineIds: [] };
+      group.tracks.push(track);
+      group.lineIds.push(entry.line.id);
+      groups.set(allocationKey, group);
+    }
+    for (const group of groups.values()) {
+      const track = group.tracks[0];
+      const offset = track.crossing ? 0 : (track.index - (track.total - 1) / 2) * region.spacing;
+      const vertical = geometry.axis === "vertical";
+      const cellKeys = track.crossing && region.kind === "gap"
+        ? region.channelBinding.cellKeys
+        : [region.channelBinding.trackCell.key];
+      const allocation = {
+        id: `${region.key}:${group.key}`,
+        regionKey: region.key,
+        trackKey: group.key,
+        lineIds: [...group.lineIds].sort(),
+        axis: geometry.axis,
+        trackCellKey: region.channelBinding.trackCell.key,
+        cellKeys,
+        coordinate: (vertical ? geometry.x + geometry.width / 2 : geometry.y + geometry.height / 2) + offset,
+        laneIndex: track.index,
+        laneCount: track.total,
+        laneOffset: offset,
+        crossing: track.crossing,
+        spans: cellKeys.map((cellKey) => {
+          const box = scene.channelCellByKey.get(cellKey).geometry;
+          return {
+            cellKey,
+            start: vertical ? box.y : box.x,
+            end: vertical ? box.y + box.height : box.x + box.width,
+          };
+        }),
+      };
+      scene.trackAllocations.set(allocation.id, allocation);
+      for (const member of group.tracks) member.allocation = allocation;
     }
   }
-  return longest;
+  preserveTrackContinuity(scene);
+}
+
+function allocationAlongBounds(allocation) {
+  return [
+    Math.min(...allocation.spans.map((span) => span.start)),
+    Math.max(...allocation.spans.map((span) => span.end)),
+  ];
+}
+
+function allocationInterval(scene, allocation) {
+  const cell = scene.channelCellByKey.get(allocation.trackCellKey);
+  if (!cell) throw new Error(`track allocation '${allocation.id}' has no canonical channel cell`);
+  const box = cell.geometry;
+  return allocation.axis === "vertical" ? [box.x, box.x + box.width] : [box.y, box.y + box.height];
+}
+
+function preserveTrackContinuity(scene) {
+  const allocations = [...scene.trackAllocations.values()];
+  const parent = new Map(allocations.map((allocation) => [allocation.id, allocation.id]));
+  const bounds = new Map(allocations.map((allocation) => [allocation.id, allocationInterval(scene, allocation)]));
+  const find = (id) => {
+    let root = id;
+    while (parent.get(root) !== root) root = parent.get(root);
+    while (parent.get(id) !== id) {
+      const next = parent.get(id);
+      parent.set(id, root);
+      id = next;
+    }
+    return root;
+  };
+  const join = (first, second) => {
+    let firstRoot = find(first.id);
+    let secondRoot = find(second.id);
+    if (firstRoot === secondRoot) return;
+    const firstBounds = bounds.get(firstRoot);
+    const secondBounds = bounds.get(secondRoot);
+    const low = Math.max(firstBounds[0], secondBounds[0]);
+    const high = Math.min(firstBounds[1], secondBounds[1]);
+    if (high <= low) return;
+    if (secondRoot.localeCompare(firstRoot) < 0) [firstRoot, secondRoot] = [secondRoot, firstRoot];
+    parent.set(secondRoot, firstRoot);
+    bounds.set(firstRoot, [low, high]);
+  };
+
+  for (const line of [...scene.lines].sort((first, second) => first.id.localeCompare(second.id))) {
+    const lineAllocations = [...new Set([...(line.regionTracks?.values() ?? [])].map((track) => track.allocation))]
+      .sort((first, second) => first.axis.localeCompare(second.axis)
+        || first.spans[0].start - second.spans[0].start
+        || first.id.localeCompare(second.id));
+    for (let index = 1; index < lineAllocations.length; index += 1) {
+      const first = lineAllocations[index - 1];
+      const second = lineAllocations[index];
+      if (first.axis === second.axis) join(first, second);
+    }
+  }
+
+  const components = new Map();
+  for (const allocation of allocations) {
+    const root = find(allocation.id);
+    const members = components.get(root) ?? [];
+    members.push(allocation);
+    components.set(root, members);
+  }
+  for (const [root, members] of components) {
+    if (members.length < 2) continue;
+    const [low, high] = bounds.get(root);
+    const center = (low + high) / 2;
+    for (const allocation of members) {
+      allocation.coordinate = Math.max(low, Math.min(high, center + allocation.laneOffset));
+      allocation.runId = root;
+    }
+  }
+}
+
+function trackPoint(track, start, end) {
+  const geometry = regionGeometry(track.region);
+  const [alongStart, alongEnd] = allocationAlongBounds(track.allocation);
+  if (geometry.axis === "vertical") {
+    const x = track.allocation.coordinate;
+    const y = Math.max(alongStart, Math.min(alongEnd, (start.y + end.y) / 2));
+    return { x, y, region: track.region, allocation: track.allocation, soft: true, crossing: track.crossing };
+  }
+  const x = Math.max(alongStart, Math.min(alongEnd, (start.x + end.x) / 2));
+  const y = track.allocation.coordinate;
+  return { x, y, region: track.region, allocation: track.allocation, soft: true, crossing: track.crossing };
+}
+
+function indexLongitudinalSpans(scene) {
+  const cellIndex = new SpatialIndex(scene.channelMesh.map((cell) => ({ cell, box: cell.geometry })));
+  const spans = new Map();
+  for (const line of scene.lines) {
+    const lineSpans = new Map();
+    spans.set(line, lineSpans);
+    for (let index = 1; index < line.route.length; index += 1) {
+      const first = line.route[index - 1];
+      const second = line.route[index];
+      const vertical = first.x === second.x;
+      const horizontal = first.y === second.y;
+      if (!vertical && !horizontal) continue;
+      for (const indexed of cellIndex.querySegment(first, second)) {
+        const cell = indexed.cell;
+        const geometry = cell.geometry;
+        let overlap = 0;
+        if (vertical && geometry.axis === "vertical"
+          && first.x >= geometry.x && first.x <= geometry.x + geometry.width) {
+          const start = Math.max(Math.min(first.y, second.y), geometry.y);
+          const end = Math.min(Math.max(first.y, second.y), geometry.y + geometry.height);
+          overlap = Math.max(0, end - start);
+        } else if (horizontal && geometry.axis === "horizontal"
+          && first.y >= geometry.y && first.y <= geometry.y + geometry.height) {
+          const start = Math.max(Math.min(first.x, second.x), geometry.x);
+          const end = Math.min(Math.max(first.x, second.x), geometry.x + geometry.width);
+          overlap = Math.max(0, end - start);
+        }
+        if (overlap <= 0) continue;
+        for (const regionKey of cell.regionKeys ?? []) {
+          lineSpans.set(regionKey, Math.max(lineSpans.get(regionKey) ?? 0, overlap));
+        }
+      }
+    }
+  }
+  return spans;
 }
 
 function trackPreference(entries, region) {
-  const axis = region.geometry.axis === "vertical" ? "x" : "y";
+  const axis = regionGeometry(region).axis === "vertical" ? "x" : "y";
   const along = axis === "x" ? "y" : "x";
   const endpointPoints = entries.flatMap(({ line }) => [line.from?.point, line.to?.point]).filter(Boolean);
   const mean = (key) => endpointPoints.reduce((sum, point) => sum + point[key], 0) / Math.max(1, endpointPoints.length);
@@ -310,6 +448,7 @@ function compareTrackPreference(first, second) {
 // authored corridor rank) decides their order; identity is only a final tie.
 function classifyRegionTracks(scene) {
   let changed = false;
+  const longitudinalSpans = indexLongitudinalSpans(scene);
   for (const region of scene.regions.values()) {
     const authored = region.entries.filter((entry) => entry.usage !== "crossing");
     const groups = new Map();
@@ -321,7 +460,11 @@ function classifyRegionTracks(scene) {
     const threshold = Math.max(24, Math.min(48, region.thickness ?? 0));
     const longitudinal = [];
     for (const [key, entries] of groups) {
-      const occupiesLane = entries.some((entry) => longitudinalSpan(entry.line, region) > threshold + 0.5);
+      const occupiesLane = entries.some((entry) => {
+        const authoredRole = nestedAuthoredRole(entry.line, region);
+        return authoredRole === "outer"
+          || authoredRole !== "nested" && (longitudinalSpans.get(entry.line)?.get(region.key) ?? 0) > threshold + 0.5;
+      });
       if (occupiesLane) longitudinal.push({ key, entries, preference: trackPreference(entries, region) });
       for (const entry of entries) {
         const track = entry.line.regionTracks.get(region.key);
@@ -617,10 +760,10 @@ function sharedPins(scene, objectIndex) {
       return (remote.x - start.x) * vector.x + (remote.y - start.y) * vector.y;
     }).filter((distance) => distance > 0);
     const trackDistances = attachments.flatMap(({ line }) => [...(line.regionTracks?.values() ?? [])].map((track) => {
-      const geometry = track.region.geometry;
+      const geometry = regionGeometry(track.region);
       const location = geometry.axis === "vertical"
-        ? { x: geometry.x + geometry.width / 2, y: start.y }
-        : { x: start.x, y: geometry.y + geometry.height / 2 };
+        ? { x: track.allocation.coordinate, y: start.y }
+        : { x: start.x, y: track.allocation.coordinate };
       return (location.x - start.x) * vector.x + (location.y - start.y) * vector.y;
     })).filter((distance) => distance > 18);
     const preference = port.sharing?.branch?.preference ?? "late";
@@ -637,28 +780,20 @@ function sharedPins(scene, objectIndex) {
   }
 }
 
-function paddingTrackPins(track, start, end) {
-  const geometry = track.region.geometry;
-  const offset = (track.index - (track.total - 1) / 2) * track.region.spacing;
+function longitudinalTrackPins(track, start, end) {
+  const geometry = regionGeometry(track.region);
+  const [alongStart, alongEnd] = allocationAlongBounds(track.allocation);
   if (geometry.axis === "vertical") {
-    const centered = geometry.x + geometry.width / 2 + offset;
-    const reusable = track.total === 1
-      ? [start.x, end.x].find((value) => value >= geometry.x && value <= geometry.x + geometry.width)
-      : null;
-    const x = reusable ?? centered;
+    const x = track.allocation.coordinate;
     return [
-      { x, y: Math.max(geometry.y, Math.min(geometry.y + geometry.height, start.y)), region: track.region },
-      { x, y: Math.max(geometry.y, Math.min(geometry.y + geometry.height, end.y)), region: track.region },
+      { x, y: Math.max(alongStart, Math.min(alongEnd, start.y)), region: track.region, allocation: track.allocation },
+      { x, y: Math.max(alongStart, Math.min(alongEnd, end.y)), region: track.region, allocation: track.allocation },
     ];
   }
-  const centered = geometry.y + geometry.height / 2 + offset;
-  const reusable = track.total === 1
-    ? [start.y, end.y].find((value) => value >= geometry.y && value <= geometry.y + geometry.height)
-    : null;
-  const y = reusable ?? centered;
+  const y = track.allocation.coordinate;
   return [
-    { x: Math.max(geometry.x, Math.min(geometry.x + geometry.width, start.x)), y, region: track.region },
-    { x: Math.max(geometry.x, Math.min(geometry.x + geometry.width, end.x)), y, region: track.region },
+    { x: Math.max(alongStart, Math.min(alongEnd, start.x)), y, region: track.region, allocation: track.allocation },
+    { x: Math.max(alongStart, Math.min(alongEnd, end.x)), y, region: track.region, allocation: track.allocation },
   ];
 }
 
@@ -683,8 +818,8 @@ function distanceToBox(point, box) {
 }
 
 function pinDistance(pin, start) {
-  return pin.region?.geometry
-    ? distanceToBox(start, pin.region.geometry)
+  return pin.region
+    ? distanceToBox(start, regionGeometry(pin.region))
     : Math.abs(pin.x - start.x) + Math.abs(pin.y - start.y);
 }
 
@@ -723,31 +858,44 @@ function insideOrSelf(object, ancestor) {
 
 function orderedPins(line, start, end) {
   const tracks = [...(line.regionTracks?.values() ?? [])];
-  const explicitPadding = new Set();
-  for (const segment of line.segments) {
-    if (segment.corridor) for (const track of tracks) if (track.region.kind === "padding" && track.region.corridors.includes(segment.corridor)) explicitPadding.add(track.region);
-    if (segment.region?.kind === "padding") for (const track of tracks) if (track.region.kind === "padding" && track.region.owner === segment.region.container && track.region.side === segment.region.side) explicitPadding.add(track.region);
-  }
+  const explicitIndexByRegion = new Map();
+  const setExplicitIndex = (key, index) => explicitIndexByRegion.set(key,
+    Math.min(explicitIndexByRegion.get(key) ?? Number.POSITIVE_INFINITY, index));
+  line.segments.forEach((segment, index) => {
+    if (segment.region?.kind === "padding") {
+      setExplicitIndex(`padding:${segment.region.container.path || "$root"}:${segment.region.side}`, index);
+    } else if (segment.region?.kind === "gap") {
+      const [first, second] = segment.region.between;
+      if (first?.parent && first.parent === second?.parent) {
+        const startIndex = Math.min(first.siblingIndex, second.siblingIndex);
+        const endIndex = Math.max(first.siblingIndex, second.siblingIndex);
+        for (let gap = startIndex; gap < endIndex; gap += 1) {
+          setExplicitIndex(`gap:${first.parent.path || "$root"}:${gap}`, index);
+        }
+      }
+    } else if (segment.corridor) {
+      for (const track of tracks) if (track.region.corridors.includes(segment.corridor)) setExplicitIndex(track.region.key, index);
+    }
+  });
+  const explicitPadding = new Set(tracks
+    .filter((track) => track.region.kind === "padding" && explicitIndexByRegion.has(track.region.key))
+    .map((track) => track.region));
+  const explicitPaddingOwners = new Set([...explicitPadding].map((region) => region.owner));
+  const authoredOwners = line.segments.map((segment, index) => ({ index, owner: explicitSegmentOwner(segment) }))
+    .filter((entry) => entry.owner);
 
   const groups = [];
   for (const track of tracks) {
-    const explicitIndex = line.segments.findIndex((segment) =>
-      segment.region?.kind === "padding"
-        ? track.region.kind === "padding" && track.region.owner === segment.region.container && track.region.side === segment.region.side
-        : segment.region?.kind === "gap"
-          ? track.region.kind === "gap" && physicalGapContains(segment.region, track.region)
-          : segment.corridor
-            ? track.region.corridors.includes(segment.corridor)
-            : false);
+    const explicitIndex = explicitIndexByRegion.get(track.region.key) ?? -1;
     if (explicitPadding.has(track.region)) {
       groups.push({
         phase: 2,
         rank: explicitIndex,
-        pins: paddingTrackPins(track, start, end).map((pin) => ({ ...pin, required: true })),
+        pins: longitudinalTrackPins(track, start, end).map((pin) => ({ ...pin, required: true })),
       });
       continue;
     }
-    if ([...explicitPadding].some((region) => region.owner === track.region.owner && track.region.kind === "gap")) continue;
+    if (track.region.kind === "gap" && explicitPaddingOwners.has(track.region.owner)) continue;
     if (explicitIndex >= 0) {
       const pin = trackPoint(track, start, end);
       // A sole authored gap between the endpoint branches is a crossing, not
@@ -767,9 +915,7 @@ function orderedPins(line, start, end) {
       if (endpoint?.physicalSide && endpoint.physicalSide !== track.region.side) continue;
       const fromSide = endpoint === line.from;
       const distance = ancestorDistance(endpoint.object, track.region.owner);
-      const containedExplicit = line.segments
-        .map((segment, index) => ({ index, owner: explicitSegmentOwner(segment) }))
-        .filter((entry) => entry.owner && insideOrSelf(entry.owner, track.region.owner));
+      const containedExplicit = authoredOwners.filter((entry) => insideOrSelf(entry.owner, track.region.owner));
 
       // Explicit regions inside a container occur before its source-side exit
       // padding and after its target-side entry padding. Interleave those
@@ -813,6 +959,37 @@ function physicalGapContains(reference, region) {
     && reference.between?.[1]?.parent === region.owner
     && region.index >= Math.min(reference.between[0].siblingIndex, reference.between[1].siblingIndex)
     && region.index < Math.max(reference.between[0].siblingIndex, reference.between[1].siblingIndex);
+}
+
+function objectDepth(object) {
+  let depth = 0;
+  for (let current = object; current?.parent; current = current.parent) depth += 1;
+  return depth;
+}
+
+function authoredRegionOwner(segment) {
+  if (segment.region?.kind === "padding") return segment.region.container;
+  if (segment.region?.kind === "gap") return segment.region.between?.[0]?.parent ?? null;
+  if (segment.corridor?.container) return segment.corridor.container;
+  return segment.corridor?.between?.[0]?.parent ?? null;
+}
+
+function segmentAuthorsRegion(segment, region) {
+  if (segment.region?.kind === "padding") {
+    return region.kind === "padding" && region.owner === segment.region.container && region.side === segment.region.side;
+  }
+  if (segment.region?.kind === "gap") return region.kind === "gap" && physicalGapContains(segment.region, region);
+  return segment.corridor ? region.corridors.includes(segment.corridor) : false;
+}
+
+// A multi-region route crosses nested bands to reach its outer corridor. The
+// shallowest authored region is longitudinal; deeper authored regions are
+// crossings. A single authored region keeps provisional geometric inference.
+function nestedAuthoredRole(line, region) {
+  const owners = line.segments.map(authoredRegionOwner).filter(Boolean);
+  if (owners.length < 2 || !line.segments.some((segment) => segmentAuthorsRegion(segment, region))) return null;
+  const shallowest = Math.min(...owners.map(objectDepth));
+  return objectDepth(region.owner) === shallowest ? "outer" : "nested";
 }
 
 function escapePoint(endpoint, distance = endpoint.routeEscapeDistance ?? endpoint.escapeDistance ?? 14) {
@@ -872,15 +1049,25 @@ function routeLine(line, index, routeIndex) {
   // next target, so the lateral travel happens inside the reserved region —
   // that is what the corridor's space was reserved for
   const rawPins = orderedPins(line, start, end);
+  const nextTravelByIndex = new Array(rawPins.length);
+  let followingTravel = end;
+  for (let index = rawPins.length - 1; index >= 0; index -= 1) {
+    nextTravelByIndex[index] = followingTravel;
+    if (!rawPins[index].passThrough) followingTravel = rawPins[index];
+  }
   const pins = [];
   let cursor = start;
   for (let index = 0; index < rawPins.length; index += 1) {
     const pin = rawPins[index];
-    const geometry = pin.region?.geometry;
+    const geometry = pin.region ? regionGeometry(pin.region) : null;
     if (pin.soft && geometry) {
-      const nextTravel = rawPins.slice(index + 1).find((candidate) => !candidate.passThrough) ?? end;
+      const nextTravel = nextTravelByIndex[index];
+      const [alongStart, alongEnd] = pin.allocation ? allocationAlongBounds(pin.allocation)
+        : geometry.axis === "vertical"
+          ? [geometry.y, geometry.y + geometry.height]
+          : [geometry.x, geometry.x + geometry.width];
       if (geometry.axis === "vertical") {
-        const clamp = (value) => Math.max(geometry.y, Math.min(geometry.y + geometry.height, value));
+        const clamp = (value) => Math.max(alongStart, Math.min(alongEnd, value));
         if (pin.passThrough) {
           const escape = escapePoint(pin.endpoint);
           const vector = SIDE_VECTOR[pin.endpoint.physicalSide];
@@ -898,11 +1085,11 @@ function routeLine(line, index, routeIndex) {
           if (cursor.y !== y) pins.push({ x: cursor.x, y: clamp(y) });
           pins.push({ x: pin.x, y: clamp(y) });
         } else {
-          const nextY = nextTravel.soft && nextTravel.region?.geometry?.axis === "vertical" ? cursor.y : nextTravel.y;
+          const nextY = nextTravel.soft && nextTravel.region && regionGeometry(nextTravel.region).axis === "vertical" ? cursor.y : nextTravel.y;
           pins.push({ x: pin.x, y: clamp(cursor.y) }, { x: pin.x, y: clamp(nextY) });
         }
       } else {
-        const clamp = (value) => Math.max(geometry.x, Math.min(geometry.x + geometry.width, value));
+        const clamp = (value) => Math.max(alongStart, Math.min(alongEnd, value));
         if (pin.passThrough) {
           const escape = escapePoint(pin.endpoint);
           const vector = SIDE_VECTOR[pin.endpoint.physicalSide];
@@ -917,7 +1104,7 @@ function routeLine(line, index, routeIndex) {
           if (cursor.x !== x) pins.push({ x: clamp(x), y: cursor.y });
           pins.push({ x: clamp(x), y: pin.y });
         } else {
-          const nextX = nextTravel.soft && nextTravel.region?.geometry?.axis === "horizontal" ? cursor.x : nextTravel.x;
+          const nextX = nextTravel.soft && nextTravel.region && regionGeometry(nextTravel.region).axis === "horizontal" ? cursor.x : nextTravel.x;
           pins.push({ x: clamp(cursor.x), y: pin.y }, { x: clamp(nextX), y: pin.y });
         }
       }
@@ -1315,23 +1502,27 @@ function authoredSegmentLabelCandidates(scene, line, label, size, objectIndex) {
   const lastIndex = Math.max(0, line.route.length - 2);
   for (const [prominence, segment] of routed.entries()) {
     for (const region of regions) {
-      const segmentHorizontal = segment.first.y === segment.second.y;
-      const followsRegionAxis = region.geometry.axis === "horizontal" ? segmentHorizontal : !segmentHorizontal;
-      const routeRank = label.placement === "start" ? segment.index
-        : label.placement === "end" ? lastIndex - segment.index
-        : label.placement === "center" ? followsRegionAxis ? 0 : 1 + prominence
-        : prominence;
-      const point = segmentRegionPoint(segment, region.geometry);
-      if (point) {
-        const directionalOffsets = localLabelOptions(segment, label, size, objectIndex).offsets;
-        for (const [rank, runPoint] of authoredRunPoints(segment, region.geometry, point, label, size).entries()) {
-          candidates.push(...pointLabelCandidates(runPoint, segmentHorizontal, label, size, -4 + routeRank * 0.2 + rank * 0.02, directionalOffsets)
-            .map((candidate) => ({
-              ...candidate,
-              authoredRegion: region,
-              authoredRun: segment.index,
-              authoredAxis: followsRegionAxis,
-            })));
+      for (const cell of region.channelBinding.cells) {
+        const geometry = cell.geometry;
+        const segmentHorizontal = segment.first.y === segment.second.y;
+        const followsRegionAxis = geometry.axis === "horizontal" ? segmentHorizontal : !segmentHorizontal;
+        const routeRank = label.placement === "start" ? segment.index
+          : label.placement === "end" ? lastIndex - segment.index
+          : label.placement === "center" ? followsRegionAxis ? 0 : 1 + prominence
+          : prominence;
+        const point = segmentRegionPoint(segment, geometry);
+        if (point) {
+          const directionalOffsets = localLabelOptions(segment, label, size, objectIndex).offsets;
+          for (const [rank, runPoint] of authoredRunPoints(segment, geometry, point, label, size).entries()) {
+            candidates.push(...pointLabelCandidates(runPoint, segmentHorizontal, label, size, -4 + routeRank * 0.2 + rank * 0.02, directionalOffsets)
+              .map((candidate) => ({
+                ...candidate,
+                authoredRegion: region,
+                authoredCell: cell,
+                authoredRun: segment.index,
+                authoredAxis: followsRegionAxis,
+              })));
+          }
         }
       }
     }
@@ -1546,9 +1737,9 @@ export function route(scene) {
   const obstacles = scene.objects.filter((object) => object.visible && object.children.length === 0 && !object.frame && !["title", "subtitle", "legend-item"].includes(object.kind));
   placePorts(scene);
   alignFacingDocks(scene);
-  for (const region of scene.regions.values()) region.geometry = regionGeometry(region);
   buildChannelMesh(scene);
   const index = new SpatialIndex([...obstacles, ...scene.channelResidents]);
+  allocateRegionTracks(scene);
   sharedPins(scene, index);
   const routeAll = () => {
     const routeIndex = new SpatialIndex([]);
@@ -1559,6 +1750,7 @@ export function route(scene) {
   };
   routeAll();
   if (classifyRegionTracks(scene)) {
+    allocateRegionTracks(scene);
     routeAll();
   }
   improveRoutes(scene, index);

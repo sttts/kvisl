@@ -1,4 +1,5 @@
 import { headGeometry, normalizedHeads } from "./heads.mjs";
+import { regionGeometry } from "./mesh.mjs";
 
 function escape(value) {
   return String(value)
@@ -195,8 +196,8 @@ function drawDividers(scene) {
   for (const corridor of scene.corridors) {
     if (!corridor.divider) continue;
     const region = [...scene.regions.values()].find((candidate) => candidate.corridors.includes(corridor));
-    if (!region?.geometry) continue;
-    const geometry = region.geometry;
+    if (!region?.channelBinding?.trackCell) continue;
+    const geometry = regionGeometry(region);
     const style = corridor.divider.style ?? {};
     const stroke = color(style.stroke, scene, "#64748b");
     const horizontal = geometry.axis === "horizontal";

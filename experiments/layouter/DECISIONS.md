@@ -121,12 +121,22 @@ Rationale: hand-drawn references equalize sibling boxes pervasively, and requiri
 
 A container title contributes to the container's intrinsic content size, but it does not translate the complete top-channel mesh. The mesh subtracts the measured title rectangle from the one top-padding region and connects the remaining parts only across positive-length shared edges.
 
-Derived gap cells similarly use only the facing overlap of adjacent siblings. Any larger approach rectangle retained by the current router is provenance, not one free-space cell.
+Derived gap track cells similarly use only the facing overlap of adjacent siblings. Their approach wings are separate canonical access cells. The router retains no larger approach rectangle.
 
 Rationale: a left-aligned title blocks routing locally. Treating its height as a global channel offset wastes the full width, while painting a bounding-union gap incorrectly marks space behind an uneven sibling as routeable.
 
 ## D17. Each side has one padding region
 
-Every container padding mesh has exactly one boundary-reaching region per side. Track allocation, free capacity, clearance, and transitions are properties of that region; they are not additional parallel regions. Each corner uses the full width and height of its two neighboring side bands.
+Every container padding mesh has exactly one boundary-reaching logical region per side. Track allocation, free capacity, clearance, and transitions are properties of that region; they are not additional parallel regions. Resident subtraction may split the region into canonical cells without inventing a second region. Each corner uses the full width and height of its two neighboring side bands.
 
-Rationale: painting base padding and a reserved track as two cells invents a second padding corridor. A single region preserves the logical topology while still retaining the narrower solved track as internal routing geometry.
+Rationale: painting base padding and a reserved track as two cells invents a second padding corridor. A single region preserves the logical topology; its track is a scalar allocation inside cited canonical cells, not a narrower hidden rectangle.
+
+## D18. The channel mesh is the only routing geometry
+
+The prototype builds the channel mesh before routing and binds every active logical region to canonical cell identities. A cell has one rectangle. Adjacency records the positive-length shared boundary as a portal interval. Track allocations cite cell identities, one cross-axis coordinate, and axial spans.
+
+`region.geometry` and per-cell `routingGeometry` shadow rectangles are forbidden. Longitudinal tracks use facing core cells; perpendicular crossings may use connected access cells. Compatible collinear allocations of one line share a coordinate from the intersection of their legal intervals. Only an empty intersection creates an intentional transition.
+
+Direct parent/child cells connect only at real shared boundaries. Padding cells leave through their own side, and corner junctions leave only through their declared outward sides.
+
+Rationale: a debug mesh reconstructed independently from routing can look correct while the line follows different coordinates. One topology makes centering, transitions, debug output, and performance assertions inspectable against the same data.
